@@ -1,0 +1,48 @@
+@base = http://127.0.0.1:5168
+@origin = http://localhost:5186
+@email = admin@minierp.example
+@password = {{$processEnv Seed__AdminPassword}}
+
+GET {{base}}/health/ready
+
+###
+
+# @name login
+POST {{base}}/api/v1/auth/login
+Origin: {{origin}}
+X-MiniErp-Session: 1
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+###
+
+GET {{base}}/api/v1/auth/me
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+###
+
+GET {{base}}/api/v1/users?page=1&pageSize=25
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+###
+
+GET {{base}}/openapi/v1.json
+
+###
+
+GET {{base}}/api/v1/products?search=VP-01&sort=sku&pageSize=15
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+###
+
+GET {{base}}/api/v1/inventory/balances?lowOnly=true&pageSize=15
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+###
+
+GET {{base}}/api/v1/inventory/history?pageSize=15
+Authorization: Bearer {{login.response.body.$.accessToken}}
