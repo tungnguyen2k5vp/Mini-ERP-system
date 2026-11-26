@@ -103,10 +103,31 @@ jobs:
           touch artifacts/browser-start
           cd frontend
           npm run test:e2e -- --reporter=line,html
-      - name: Validate container configuration and builds
+      - name: Verify Compose, SQL runtime permissions and same-origin login
+        env:
+          ERP_WEB_PORT: '5198'
+          ERP_PUBLIC_ORIGIN: http://localhost:5198
         run: |
+          set -euo pipefail
           docker compose config --quiet
-          docker compose build
+          docker compose up --build --detach --wait --wait-timeout 420
+          python3 - <<'PY'
+          import json, os, urllib.request as http
+          origin = os.environ['ERP_PUBLIC_ORIGIN']
+          with http.urlopen(origin + '/health/ready', timeout=10) as response:
+              assert response.status == 200
+          url = origin + '/api/v1'
+          payload = json.dumps({'email': os.environ['ERP_ADMIN_EMAIL'], 'password': os.environ['ERP_ADMIN_PASSWORD']}).encode()
+          login = http.Request(url + '/auth/login', data=payload, headers={'Origin': origin, 'Content-Type': 'application/json', 'X-MiniErp-Session': '1'})
+          with http.urlopen(login, timeout=15) as response:
+              headers = {'Authorization': 'Bearer ' + json.load(response)['accessToken']}
+          with http.urlopen(http.Request(url + '/inventory/balances?pageSize=1', headers=headers), timeout=15) as response:
+              assert json.load(response)['total'] >= 96
+          with http.urlopen(http.Request(url + '/reports/dashboard', headers=headers), timeout=15) as response:
+              assert json.load(response)['metrics']
+          with http.urlopen(origin + '/mua-hang', timeout=10) as response:
+              assert b'id="root"' in response.read()
+          PY
       - name: Collect SQL diagnostics
         if: always()
         run: |
