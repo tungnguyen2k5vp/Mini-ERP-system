@@ -1,0 +1,131 @@
+name: Verify MiniErp
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      ASPNETCORE_ENVIRONMENT: Development
+      Auth__PublicOrigin: http://localhost:5186
+      Seed__AdminEmail: admin@minierp.example
+      MINIERP_E2E_EMAIL: admin@minierp.example
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Generate isolated, masked test credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          sql_password="$(openssl rand -hex 24)Aa7!"
+          app_password="$(openssl rand -hex 24)Bb8!"
+          runtime_password="$(openssl rand -hex 24)Cc9@"
+          signing_key="$(openssl rand -base64 48 | tr -d '\n')"
+          for value in "$sql_password" "$app_password" "$runtime_password" "$signing_key"; do
+            printf '::add-mask::%s\n' "$value"
+          done
+          {
+            printf 'MSSQL_SA_PASSWORD=%s\n' "$sql_password"
+            printf 'ERP_DB_PASSWORD=%s\n' "$runtime_password"
+            printf 'Auth__SigningKey=%s\n' "$signing_key"
+            printf 'ERP_SIGNING_KEY=%s\n' "$signing_key"
+            printf 'Seed__AdminPassword=%s\n' "$app_password"
+            printf 'ERP_ADMIN_PASSWORD=%s\n' "$app_password"
+            printf 'MINIERP_E2E_PASSWORD=%s\n' "$app_password"
+            printf 'ERP_ADMIN_EMAIL=admin@minierp.example\n'
+            printf 'ERP_PUBLIC_ORIGIN=http://localhost:5186\n'
+            printf 'ConnectionStrings__Erp=Server=127.0.0.1,1433;Database=MiniErp_Test_CI;User Id=sa;Password=%s;Encrypt=True;TrustServerCertificate=True\n' "$sql_password"
+          } >> "$GITHUB_ENV"
+      - name: Start disposable SQL Server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts docs/screenshots
+          docker run --detach --name minierp-ci-sql --env ACCEPT_EULA=Y --env MSSQL_PID=Developer --env MSSQL_SA_PASSWORD --publish 127.0.0.1:1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+          export SQLCMDPASSWORD="$MSSQL_SA_PASSWORD"
+          for attempt in $(seq 1 60); do
+            if docker exec --env SQLCMDPASSWORD minierp-ci-sql /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -b -Q 'SELECT 1' >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          echo 'SQL Server readiness timed out.' >&2
+          exit 1
+      - name: Locked dependency installation
+        run: |
+          dotnet restore MiniErp.sln --locked-mode
+          npm --prefix frontend ci --ignore-scripts
+      - name: Backend build and SQL Server tests
+        run: |
+          dotnet build MiniErp.sln --no-restore -c Release
+          dotnet test MiniErp.sln --no-build --no-restore -c Release --logger trx --results-directory artifacts/backend
+      - name: Frontend verification
+        run: |
+          npm --prefix frontend run lint
+          npm --prefix frontend run typecheck
+          npm --prefix frontend test
+          npm --prefix frontend run build
+      - name: Install locked Playwright browser
+        working-directory: frontend
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Browser flows on a separate seeded test database
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ConnectionStrings__Erp="Server=127.0.0.1,1433;Database=MiniErp_Test_Browser;User Id=sa;Password=$MSSQL_SA_PASSWORD;Encrypt=True;TrustServerCertificate=True"
+          api=backend/src/MiniErp.Api/bin/Release/net10.0/MiniErp.Api.dll
+          dotnet "$api" --migrate --seed
+          dotnet "$api" --urls http://127.0.0.1:5168 > artifacts/api.log 2>&1 &
+          api_pid=$!
+          (cd frontend && node node_modules/vite/bin/vite.js --host localhost --port 5186 --strictPort) > artifacts/web.log 2>&1 &
+          web_pid=$!
+          trap 'kill "$api_pid" "$web_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:5168/health/ready >/dev/null && curl --fail --silent http://localhost:5186/ >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          touch artifacts/browser-start
+          cd frontend
+          npm run test:e2e -- --reporter=line,html
+      - name: Validate container configuration and builds
+        run: |
+          docker compose config --quiet
+          docker compose build
+      - name: Collect SQL diagnostics
+        if: always()
+        run: |
+          mkdir -p artifacts/screenshots
+          docker logs minierp-ci-sql > artifacts/sql.log 2>&1 || true
+          if test -f artifacts/browser-start; then
+            find docs/screenshots -type f -newer artifacts/browser-start -exec cp -- {} artifacts/screenshots/ \;
+          fi
+      - name: Upload verification artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ github.run_id }}
+          path: |
+            artifacts/
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Remove disposable SQL container
+        if: always()
+        run: docker rm --force minierp-ci-sql || true
