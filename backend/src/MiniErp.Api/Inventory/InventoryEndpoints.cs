@@ -12,7 +12,7 @@ internal static class InventoryEndpoints
 {
     public static void MapInventory(this RouteGroupBuilder api)
     {
-        var inventory = api.MapGroup("/inventory").WithTags("Inventory").RequireAuthorization(Permissions.ViewInventory);
+        var inventory = api.MapGroup("/inventory").WithTags("Inventory").RequireAuthorization(Permissions.ViewInventory).AddEndpointFilter<FinancialFields>();
         inventory.MapGet("/balances", async (Guid? warehouseId, Guid? productId, string? search, bool? lowOnly, int? page, int? pageSize,
             InventoryReport report, CancellationToken ct) =>
         {

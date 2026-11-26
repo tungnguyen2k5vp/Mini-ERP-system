@@ -21,3 +21,7 @@ Keep the approved order separate from stock and finance events. Each fulfillment
 ## 5. Credits and cash allocation
 
 Match unpaid credits to unpaid debits within the same order before accepting cash allocations. The settlement calculation determines collectible amounts and caps refunds by net cash collected. Payments acquire the affected order locks in sorted order, validate the complete allocation and commit once. This preserves independent order histories when one transfer settles multiple invoices.
+
+## 6. Sales cost attribution and legacy orders
+
+In V2 the existing source stock line also stores its posted two-decimal sales cost. It shares the invoice transaction. Proportional returns draw from the remaining cents of that product, and the last return takes the exact residual. Historical orders may have only document totals. Keep their existing policy through subsequent returns and reversals. [Decisions and migration](../DECISIONS.md)

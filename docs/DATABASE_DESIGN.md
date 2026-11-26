@@ -1,5 +1,7 @@
 # Database design
 
+Migration `20261126100030_PostedSalesCostSnapshots` adds `inventory.DocumentLines.PostedSalesCost decimal(19,2) NULL` and a nonnegative check. New attributed sales events store a document-line amount in the posting transaction. The column remains null for independent warehouse operations, purchases and unattributed historical orders. Compare V1 and V2 fingerprints with the [read-only rehearsal script](../database/scripts/verify-v2-history.sql).
+
 Use a separate SQL Server database for MiniErp development and MiniErp_Test for tests. EF Core migrations under backend/src/MiniErp.Infrastructure/Persistence/Migrations own the schema. See [ERD](diagrams/ERD.md).
 
 The auth schema contains Identity users, roles, memberships, claims, logins, tokens and refresh sessions. Normalized email and refresh token hash are unique. Refresh sessions reference users with restrictive deletion and use rowversion for refresh rotation.

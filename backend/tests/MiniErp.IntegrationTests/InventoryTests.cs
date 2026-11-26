@@ -22,10 +22,15 @@ public sealed class InventoryTests(ErpFixture fixture)
         Assert.Equal(openingId, (await CreateAsync(client, opening)).Document.Id);
         using var reusedKey = await client.PostAsJsonAsync(Root + "/documents", opening with { Note = "different" });
         Assert.Equal(HttpStatusCode.Conflict, reusedKey.StatusCode);
+        using var changedQuantity = await client.PostAsJsonAsync(Root + "/documents", opening with { Lines = [new(product, 101, 100)] });
+        Assert.Equal(HttpStatusCode.Conflict, changedQuantity.StatusCode);
+        using var changedCost = await client.PostAsJsonAsync(Root + "/documents", opening with { Lines = [new(product, 100, 101)] });
+        Assert.Equal(HttpStatusCode.Conflict, changedCost.StatusCode);
         await PostAsync(client, openingId);
         await PostAsync(client, (await CreateAsync(client, opening with
         {
-            RequestId = Guid.NewGuid(), Lines = [new(product, 50, 160)]
+            RequestId = Guid.NewGuid(),
+            Lines = [new(product, 50, 160)]
         })).Document.Id);
         var issue = await DraftAsync(client, StockKind.Issue, source, product, 20);
         await PostAsync(client, issue);

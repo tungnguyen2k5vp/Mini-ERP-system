@@ -1,5 +1,7 @@
 # Security
 
+Server-side field permissions cover purchase price, COGS and margin across JSON responses, order sorting and Excel cells. Inspection of a sales source-cost discrepancy requires the same sensitive-cost grant as the numeric values. A restricted row is excluded before computing the exception count and page. [Endpoint and field matrix](API_PERMISSION_MATRIX.md)
+
 The commercial endpoints resolve the actual order kind in SQL before checking the module grant. Fulfillment and reversal also require Inventory.Post. Finance reads and postings have separate grants. Dashboard, search and work queues filter by current permissions. SQL integration cases exercise denial for anonymous, Viewer and management users.
 
 Workbook imports constrain the HTTP body, the expanded ZIP/XML and the row count. Parsed identifiers and decimal values use ordinary catalog validation and a transaction. Operational logs include route templates, response status, duration and correlation ID. Authenticated API responses use no-store. The access token, cookie value, form payloads and connection strings are excluded from request logs.

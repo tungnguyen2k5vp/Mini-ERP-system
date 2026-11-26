@@ -1,3 +1,4 @@
+using System.Data;
 using Dapper;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
@@ -13,51 +14,64 @@ public sealed class OperationsReport(ErpDbContext db, TimeProvider clock)
 {
     public (DateOnly From, DateOnly To) Dates(DateOnly? from, DateOnly? to)
     {
-        var end = to ?? DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
+        var end = to ?? BusinessCalendar.DateAt(clock.GetUtcNow().UtcDateTime);
         if (end.Year<1753) throw ErpException.Invalid("report_dates", "Ngày báo cáo cần từ năm 1753.");
         var start = from ?? end.AddDays(-29);
         if (start.Year<1753 || end == DateOnly.MaxValue || start > end || end.DayNumber - start.DayNumber > 366)
             throw ErpException.Invalid("report_dates", "Khoảng ngày không hợp lệ hoặc vượt 367 ngày.");
         return (start, end);
     }
-    private static object Bounds(DateOnly from, DateOnly to) => new { From = from.ToDateTime(TimeOnly.MinValue), Until = to.AddDays(1).ToDateTime(TimeOnly.MinValue) };
+
+    private static DynamicParameters Bounds(DateOnly start, DateOnly end, object? filters = null)
+    {
+        var parameters = new DynamicParameters(filters);
+        parameters.Add("From", BusinessCalendar.StartUtc(start), DbType.DateTime2);
+        parameters.Add("Until", BusinessCalendar.StartUtc(end.AddDays(1)), DbType.DateTime2);
+        return parameters;
+    }
 
     public async Task<DashboardResponse> DashboardAsync(DateOnly? from, DateOnly? to, IReadOnlySet<string> grants, CancellationToken ct)
     {
         var (start, end) = Dates(from, to);
-        var bounds = Bounds(start, end);
+        var bounds = Bounds(start, end, new { BusinessCalendar.OffsetHours });
         var metrics = new List<DashboardMetric>();
         var alerts = new List<DashboardAlert>();
         StockTrend[] trend = [];
         ProfitTrend[] profit = [];
         TopProduct[] top = [];
         await using var sql = new SqlConnection(db.Database.GetConnectionString());
-        async Task<decimal> Scalar(string text) => await sql.ExecuteScalarAsync<decimal>(new CommandDefinition(text, bounds, cancellationToken: ct));
+        await sql.OpenAsync(ct);
+        await using var read = await sql.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        async Task<decimal> Scalar(string text) => await sql.ExecuteScalarAsync<decimal>(new CommandDefinition(text, bounds, read, cancellationToken: ct));
         if (grants.Contains(Permissions.ViewInventory))
         {
-            metrics.Add(new("stockQuantity", "Tồn kho cuối kỳ", await Scalar("SELECT COALESCE(SUM(QuantityDelta),0) FROM inventory.Movements WHERE PostedAtUtc<@Until"), "đơn vị", "/ton-kho"));
+            metrics.Add(new("stockSkuCount", "SKU còn tồn cuối kỳ", await Scalar("""
+                SELECT COUNT(*) FROM (SELECT ProductId FROM inventory.Movements
+                WHERE PostedAtUtc<@Until GROUP BY ProductId HAVING SUM(QuantityDelta)>0) s
+                """), "SKU", $"/bao-cao?from={start:yyyy-MM-dd}&to={end:yyyy-MM-dd}"));
             trend = (await sql.QueryAsync<StockTrend>(new CommandDefinition("""
-                SELECT CAST(PostedAtUtc AS date) Day,SUM(CASE WHEN QuantityDelta>0 THEN QuantityDelta ELSE 0 END) Received,
-                SUM(CASE WHEN QuantityDelta<0 THEN -QuantityDelta ELSE 0 END) Issued FROM inventory.Movements
-                WHERE PostedAtUtc>=@From AND PostedAtUtc<@Until GROUP BY CAST(PostedAtUtc AS date) ORDER BY Day
-                """, bounds, cancellationToken: ct))).ToArray();
+                SELECT CAST(DATEADD(hour,@OffsetHours,PostedAtUtc) AS date) Day,
+                    COUNT(CASE WHEN Kind=1 THEN 1 END) ReceiptCount,COUNT(CASE WHEN Kind=2 THEN 1 END) IssueCount
+                FROM inventory.Documents WHERE Kind IN (1,2) AND PostedAtUtc>=@From AND PostedAtUtc<@Until
+                GROUP BY CAST(DATEADD(hour,@OffsetHours,PostedAtUtc) AS date) ORDER BY Day
+                """, bounds, read, cancellationToken: ct))).ToArray();
             var low = await Scalar("""
                 SELECT COUNT(*) FROM (SELECT WarehouseId,ProductId,SUM(QuantityDelta) Qty FROM inventory.Movements
                 WHERE PostedAtUtc<@Until GROUP BY WarehouseId,ProductId) b JOIN catalog.Products p ON p.Id=b.ProductId
                 WHERE b.Qty<=p.MinimumStock
                 """);
-            alerts.Add(new("Vị trí tồn thấp", (int)low, "/bao-cao?filter=low"));
+            alerts.Add(new("Vị trí tồn thấp cuối kỳ", (int)low, $"/bao-cao?filter=low&from={start:yyyy-MM-dd}&to={end:yyyy-MM-dd}"));
         }
         foreach (var kind in new[] { (Grant: Permissions.ViewPurchasing, Kind: 1, Key: "purchaseOrders", Label: "Đơn mua trong kỳ", Href: "/mua-hang"),
             (Grant: Permissions.ViewSales, Kind: 2, Key: "salesOrders", Label: "Đơn bán trong kỳ", Href: "/ban-hang") })
         {
             if (!grants.Contains(kind.Grant)) continue;
             var count = await sql.ExecuteScalarAsync<decimal>(new CommandDefinition("SELECT COUNT(*) FROM orders.Orders WHERE Kind=@Kind AND CreatedAtUtc>=@From AND CreatedAtUtc<@Until",
-                new { kind.Kind, From = start.ToDateTime(TimeOnly.MinValue), Until = end.AddDays(1).ToDateTime(TimeOnly.MinValue) }, cancellationToken: ct));
+                Bounds(start, end, new { kind.Kind }), read, cancellationToken: ct));
             metrics.Add(new(kind.Key, kind.Label, count, "đơn", kind.Href));
             if(grants.Contains(kind.Kind==1?Permissions.ApprovePurchasing:Permissions.ApproveSales))
             {
-                var pending=await sql.ExecuteScalarAsync<int>(new CommandDefinition("SELECT COUNT(*) FROM orders.Orders WHERE Kind=@Kind AND Status=2",new{kind.Kind},cancellationToken:ct));
+                var pending=await sql.ExecuteScalarAsync<int>(new CommandDefinition("SELECT COUNT(*) FROM orders.Orders WHERE Kind=@Kind AND Status=2",new{kind.Kind},read,cancellationToken:ct));
                 alerts.Add(new(kind.Kind==1?"Đơn mua chờ phê duyệt":"Đơn bán chờ phê duyệt",pending,kind.Href+"?status=2"));
             }
         }
@@ -66,41 +80,55 @@ public sealed class OperationsReport(ErpDbContext db, TimeProvider clock)
             foreach (var direction in new[] { (Id: 1, Key: "receivable", Label: "Phải thu cuối kỳ"), (Id: 2, Key: "payable", Label: "Phải trả cuối kỳ") })
             {
                 var value = await sql.ExecuteScalarAsync<decimal>(new CommandDefinition("""
-                    SELECT COALESCE((SELECT SUM(Amount*CASE WHEN IsCredit=1 THEN -1 ELSE 1 END) FROM finance.Invoices WHERE Direction=@Direction AND IssuedAtUtc<@Until),0)
-                    -COALESCE((SELECT SUM(Amount*CASE WHEN IsRefund=1 THEN -1 ELSE 1 END) FROM finance.Payments WHERE Direction=@Direction AND PostedAtUtc<@Until),0)
-                    """, new { Direction = direction.Id, Until = end.AddDays(1).ToDateTime(TimeOnly.MinValue) }, cancellationToken: ct));
-                metrics.Add(new(direction.Key, direction.Label, value, "VND", "/tai-chinh?direction="+direction.Id));
+                    SELECT COALESCE((SELECT CAST(SUM(Amount*CASE WHEN IsCredit=1 THEN -1 ELSE 1 END) AS decimal(28,2)) FROM finance.Invoices WHERE Direction=@Direction AND IssuedAtUtc<@Until),0)
+                    -COALESCE((SELECT CAST(SUM(Amount*CASE WHEN IsRefund=1 THEN -1 ELSE 1 END) AS decimal(28,2)) FROM finance.Payments WHERE Direction=@Direction AND PostedAtUtc<@Until),0)
+                    """, Bounds(start, end, new { Direction = direction.Id }), read, cancellationToken: ct));
+                metrics.Add(new(direction.Key, direction.Label, value, "VND", $"/tai-chinh?direction={direction.Id}&tab=aging&asOfDate={end:yyyy-MM-dd}"));
             }
         }
         if (grants.Contains(Permissions.ViewSensitiveReports) && grants.Contains(Permissions.ViewSales))
         {
             profit = (await sql.QueryAsync<ProfitTrend>(new CommandDefinition("""
-                SELECT CAST(IssuedAtUtc AS date) Day,SUM(Amount*CASE WHEN IsCredit=1 THEN -1 ELSE 1 END) Revenue,
+                SELECT CAST(DATEADD(hour,@OffsetHours,IssuedAtUtc) AS date) Day,SUM(Amount*CASE WHEN IsCredit=1 THEN -1 ELSE 1 END) Revenue,
                 SUM(CostAmount*CASE WHEN IsCredit=1 THEN -1 ELSE 1 END) Cost,
                 SUM((Amount-CostAmount)*CASE WHEN IsCredit=1 THEN -1 ELSE 1 END) GrossProfit
                 FROM finance.Invoices WHERE Direction=1 AND IssuedAtUtc>=@From AND IssuedAtUtc<@Until
-                GROUP BY CAST(IssuedAtUtc AS date) ORDER BY Day
-                """, bounds, cancellationToken: ct))).ToArray();
+                GROUP BY CAST(DATEADD(hour,@OffsetHours,IssuedAtUtc) AS date) ORDER BY Day
+                """, bounds, read, cancellationToken: ct))).ToArray();
             metrics.Add(new("revenue", "Doanh thu thuần", profit.Sum(x => x.Revenue), "VND", "/tong-quan#financial-report"));
             metrics.Add(new("costOfGoods", "Giá vốn", profit.Sum(x => x.Cost), "VND", "/tong-quan#financial-report"));
             metrics.Add(new("grossProfit", "Lợi nhuận gộp", profit.Sum(x => x.GrossProfit), "VND", "/tong-quan#financial-report"));
+            // Apply the same cumulative rounding as fulfillment. A reversal copies its source line's cents.
             top = (await sql.QueryAsync<TopProduct>(new CommandDefinition("""
-                WITH Lines AS (
-                SELECT i.Id InvoiceId,m.ProductId,p.Sku,p.Name,-m.QuantityDelta Quantity,
-                  ROUND(-m.QuantityDelta*l.UnitPrice,2) LineRevenue,
-                  i.Amount*CASE WHEN i.IsCredit=1 THEN -1 ELSE 1 END InvoiceRevenue,
-                  ROW_NUMBER() OVER(PARTITION BY i.Id ORDER BY m.ProductId) LineNumber
-                FROM inventory.Movements m JOIN orders.Fulfillments f ON f.StockDocumentId=m.DocumentId
-                JOIN finance.Invoices i ON i.StockDocumentId=m.DocumentId
-                JOIN orders.Orders o ON o.Id=f.OrderId AND o.Kind=2
-                JOIN orders.OrderLines l ON l.OrderId=o.Id AND l.ProductId=m.ProductId JOIN catalog.Products p ON p.Id=m.ProductId
-                WHERE i.IssuedAtUtc>=@From AND i.IssuedAtUtc<@Until),
-                Attributed AS (SELECT *,LineRevenue+CASE WHEN LineNumber=1 THEN InvoiceRevenue-SUM(LineRevenue) OVER(PARTITION BY InvoiceId) ELSE 0 END Revenue FROM Lines)
-                SELECT TOP (10) ProductId,Sku,Name,SUM(Quantity) Quantity,SUM(Revenue) Revenue
-                FROM Attributed GROUP BY ProductId,Sku,Name
-                ORDER BY Revenue DESC,ProductId
-                """, bounds, cancellationToken: ct))).ToArray();
+                WITH PeriodInvoices AS (
+                    SELECT StockDocumentId,OrderId,IsCredit FROM finance.Invoices
+                    WHERE Direction=1 AND IssuedAtUtc>=@From AND IssuedAtUtc<@Until
+                ), History AS (
+                    SELECT f.Id,f.ReversesId,f.StockDocumentId,d.ProductId,d.Quantity,l.UnitPrice,
+                        SUM(CASE WHEN f.ReversesId IS NULL THEN d.Quantity ELSE -d.Quantity END) OVER (
+                            PARTITION BY f.OrderId,d.ProductId,COALESCE(original.IsReturn,f.IsReturn)
+                            ORDER BY f.Id ROWS UNBOUNDED PRECEDING) Cumulative
+                    FROM orders.Fulfillments f
+                    JOIN inventory.DocumentLines d ON d.DocumentId=f.StockDocumentId
+                    JOIN orders.OrderLines l ON l.OrderId=f.OrderId AND l.ProductId=d.ProductId
+                    LEFT JOIN orders.Fulfillments original ON original.Id=f.ReversesId
+                    WHERE EXISTS (SELECT 1 FROM PeriodInvoices i WHERE i.OrderId=f.OrderId)
+                ), Priced AS (
+                    SELECT Id,ProductId,
+                        ROUND(CAST(Cumulative AS decimal(18,4))*UnitPrice,2)
+                        - ROUND(CAST(CAST(Cumulative AS decimal(19,4))-Quantity AS decimal(18,4))*UnitPrice,2) Amount
+                    FROM History WHERE ReversesId IS NULL
+                )
+                SELECT TOP (10) h.ProductId,p.Sku,p.Name,
+                    SUM(CASE WHEN i.IsCredit=1 THEN -h.Quantity ELSE h.Quantity END) Quantity,
+                    SUM(CASE WHEN i.IsCredit=1 THEN -s.Amount ELSE s.Amount END) Revenue
+                FROM PeriodInvoices i JOIN History h ON h.StockDocumentId=i.StockDocumentId
+                JOIN Priced s ON s.Id=COALESCE(h.ReversesId,h.Id) AND s.ProductId=h.ProductId
+                JOIN catalog.Products p ON p.Id=h.ProductId
+                GROUP BY h.ProductId,p.Sku,p.Name ORDER BY Revenue DESC,h.ProductId
+                """, bounds, read, cancellationToken: ct))).ToArray();
         }
+        await read.CommitAsync(ct);
         return new(start, end, metrics.ToArray(), trend, top, alerts.ToArray(), profit);
     }
 
@@ -126,11 +154,20 @@ public sealed class OperationsReport(ErpDbContext db, TimeProvider clock)
         filter ??= "all";
         if (filter is not ("all" or "slow" or "low")) throw ErpException.Invalid("stock_filter", "Bộ lọc tồn kho không hợp lệ.");
         await using var sql = new SqlConnection(db.Database.GetConnectionString());
-        var command = new CommandDefinition(StockCte + "SELECT COUNT(*) FROM F;" + StockCte + "SELECT WarehouseId,Warehouse,ProductId,Sku,Name,Opening,Received,Issued,Closing,LastMovementAtUtc,MinimumStock FROM F ORDER BY Warehouse,Sku,WarehouseId,ProductId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY;",
-            new { From = start.ToDateTime(TimeOnly.MinValue), Until = end.AddDays(1).ToDateTime(TimeOnly.MinValue), WarehouseId = warehouseId, Filter = filter, Offset = (page - 1) * size, Size = size }, cancellationToken: ct);
+        await sql.OpenAsync(ct);
+        await using var read = await sql.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        var command = new CommandDefinition(StockCte + """
+            SELECT WarehouseId,Warehouse,ProductId,Sku,Name,Opening,Received,Issued,Closing,LastMovementAtUtc,MinimumStock
+            INTO #StockReport FROM F;
+            SELECT COUNT(*) FROM #StockReport;
+            SELECT * FROM #StockReport ORDER BY Warehouse,Sku,WarehouseId,ProductId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY;
+            """,
+            Bounds(start, end, new { WarehouseId = warehouseId, Filter = filter, Offset = (page - 1) * size, Size = size }), read, cancellationToken: ct);
         using var results = await sql.QueryMultipleAsync(command);
         var count = await results.ReadSingleAsync<int>();
-        return new((await results.ReadAsync<StockReportRow>()).AsList(), page, size, count);
+        var rows = (await results.ReadAsync<StockReportRow>()).AsList();
+        await read.CommitAsync(ct);
+        return new(rows, page, size, count);
     }
 
     public async Task<SearchHit[]> SearchAsync(string? query, IReadOnlySet<string> grants, CancellationToken ct)
@@ -154,10 +191,14 @@ public sealed class OperationsReport(ErpDbContext db, TimeProvider clock)
     {
         var (start,end) = Dates(from,to);
         await using var sql = new SqlConnection(db.Database.GetConnectionString());
+        await sql.OpenAsync(ct);
+        await using var read = await sql.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         const string predicate = " FROM audit.AuditLogs a LEFT JOIN auth.Users u ON u.Id=a.UserId WHERE a.TimestampUtc>=@From AND a.TimestampUtc<@Until AND (@Search IS NULL OR CHARINDEX(@Search,a.Action)>0 OR CHARINDEX(@Search,a.Entity)>0 OR CHARINDEX(@Search,a.CorrelationId)>0) ";
         using var result = await sql.QueryMultipleAsync(new CommandDefinition("SELECT COUNT(*)" + predicate + ";SELECT a.Id,a.TimestampUtc,COALESCE(u.DisplayName,N'Hệ thống') Actor,a.Action,a.Entity,a.EntityId,a.Result,a.CorrelationId" + predicate + "ORDER BY a.TimestampUtc DESC,a.Id DESC OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY;",
-            new { From=start.ToDateTime(TimeOnly.MinValue), Until=end.AddDays(1).ToDateTime(TimeOnly.MinValue), Search=string.IsNullOrWhiteSpace(search)?null:search.Trim(),Offset=(page-1)*size,Size=size },cancellationToken:ct));
+            Bounds(start,end,new { Search=string.IsNullOrWhiteSpace(search)?null:search.Trim(),Offset=(page-1)*size,Size=size }),read,cancellationToken:ct));
         var total=await result.ReadSingleAsync<int>();
-        return new((await result.ReadAsync<AuditRow>()).AsList(),page,size,total);
+        var rows=(await result.ReadAsync<AuditRow>()).AsList();
+        await read.CommitAsync(ct);
+        return new(rows,page,size,total);
     }
 }

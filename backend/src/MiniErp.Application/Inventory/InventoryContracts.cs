@@ -18,11 +18,15 @@ public sealed record StockDocumentResponse(StockDocumentRow Document, string? No
     IReadOnlyList<StockLineResponse> Lines);
 
 public sealed record StockBalanceRow(Guid WarehouseId, string WarehouseName, Guid ProductId, string Sku,
-    string ProductName, decimal OnHand, decimal Reserved, decimal Available, decimal AverageCost,
+    string ProductName, decimal OnHand, decimal Reserved, decimal Available, decimal? AverageCost,
     decimal MinimumStock, bool IsLowStock);
 
 public sealed record StockMovementRow(long Id, int DocumentId, string DocumentNumber, Guid WarehouseId,
-    string WarehouseName, Guid ProductId, string Sku, decimal QuantityDelta, decimal UnitCost,
+    string WarehouseName, Guid ProductId, string Sku, decimal QuantityDelta, decimal? UnitCost,
     decimal BalanceAfter, DateTimeOffset PostedAt);
 
-public sealed record StockProductOption(Guid Id, string Sku, string Name, decimal PurchasePrice, decimal SalePrice);
+public sealed record StockProductOption(Guid Id, string Sku, string Name, decimal? PurchasePrice, decimal SalePrice);
+
+public sealed record StockReconciliationRow(Guid WarehouseId, string Warehouse, Guid ProductId, string Sku,
+    decimal OnHand, decimal LedgerQuantity, decimal Reserved, decimal OrderReservations,
+    decimal OpenCommitment, int InconsistentOrderLines, bool HasBalance);

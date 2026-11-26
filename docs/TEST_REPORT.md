@@ -1,5 +1,19 @@
 # Test report
 
+## V2 milestone 1 · 26 November 2026
+
+| Surface | Observed result |
+| --- | --- |
+| .NET and SQL Server | 12 unit and 47 SQL integration tests passed with zero skips on the migrated test database and on a clean V2 installation. Coverage includes repeat cancellation, linked reversal, exact COGS by SKU, legacy returns, source exceptions, current grants, cent precision, SQL deadlock and HTTP report entry points. |
+| Read consistency | The cancellation test blocked a report behind a test transaction, cancelled it, verified `@@TRANCOUNT=0` on the same physical connection and read again. Stock diagnostics catch opposite line-level reservation errors even when aggregate totals match. |
+| Local time and money | Posted an order across the last 100 ns before a Vietnam year boundary, at midnight and at the end of the next local day. Verified stock, audit, receipt/issue counts, per-SKU revenue, COGS and finance cutoffs. Split receipts, credits and refunds retained a one-cent receivable/payable balance. |
+| Upgrade rehearsal | On `MiniErp_Test_V2_Browser`, compared the same ordered SHA-256 projections of ten business tables before and after migration 5. All matched, including 303 orders, 374 invoices, 202 payments and 474 movements. All 472 prior stock lines kept a null sales-cost snapshot. EF reported no pending model changes. |
+| Browser and accessibility | One local run passed all 23 Playwright cases. Chromium ran 15 including the existing commercial flow and Warehouse screen/print price redaction. Firefox and WebKit each ran four P0 tests using real SQL and API responses. The finance reconciliation screen had zero axe violations for the configured WCAG A/AA tags in all three engines. Windows Firefox used software rendering. |
+| Responsive UI | Checked stock diagnostics, finance exceptions, aging and dashboard at 320, 390, 768, 1024, 1280 and 1440 measured CSS pixels in each engine. The tests captured 72 views and checked document overflow. These [stock](screenshots/v2-p0-stock-390.png), [finance](screenshots/v2-p0-finance-1280.png) and [dashboard](screenshots/v2-p0-dashboard-1280.png) images come from the passing Chromium run. |
+| Frontend | ESLint, TypeScript, 3 Vitest tests and the production Vite build passed. Rollup issued two upstream Zod annotation notices. |
+
+The full V2 roadmap contains later milestones for draft revision, credit limits, payment correction and quotation conversion. The older test counts below refer to V1 checkpoints.
+
 ## 26 November 2026 — integrated ERP
 
 | Check | Observed result |

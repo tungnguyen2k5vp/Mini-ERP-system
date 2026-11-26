@@ -31,8 +31,9 @@ export function permissionLabel(permission: string) {
   return modules[module] && actions[action] ? actions[action] + ' ' + modules[module] : permission
 }
 
-export const formatMoney = new Intl.NumberFormat('vi-VN', {
+const currencyFormat = new Intl.NumberFormat('vi-VN', {
   style: 'currency', currency: 'VND', minimumFractionDigits: 0, maximumFractionDigits: 4,
 }).format
+export const formatMoney = (value: number | null) => value === null ? '—' : currencyFormat(value)
 
 export const formatQuantity = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 4 }).format

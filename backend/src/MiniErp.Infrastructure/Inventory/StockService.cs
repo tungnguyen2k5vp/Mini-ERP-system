@@ -28,7 +28,9 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
             ?? throw ErpException.Missing("stock_document_missing", "Không tìm thấy chứng từ kho.");
         var detail = await db.StockDocuments.AsNoTracking().Where(x => x.Id == id).Select(x => new
         {
-            x.Note, x.DestinationId, Lines = x.Lines.OrderBy(l => l.Sku).Select(l =>
+            x.Note,
+            x.DestinationId,
+            Lines = x.Lines.OrderBy(l => l.Sku).Select(l =>
                 new StockLineResponse(l.ProductId, l.Sku, l.ProductName, l.Quantity, l.UnitCost)).ToArray()
         }).SingleAsync(ct);
         return new StockDocumentResponse(row, detail.Note, detail.DestinationId, detail.Lines);
@@ -60,12 +62,19 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
             : [];
         var doc = new StockDocument
         {
-            RequestId = input.RequestId, Kind = input.Kind, WarehouseId = input.WarehouseId, DestinationId = input.DestinationId,
-            Note = note, CreatedAtUtc = clock.GetUtcNow().UtcDateTime,
+            RequestId = input.RequestId,
+            Kind = input.Kind,
+            WarehouseId = input.WarehouseId,
+            DestinationId = input.DestinationId,
+            Note = note,
+            CreatedAtUtc = clock.GetUtcNow().UtcDateTime,
             Lines = input.Lines.Select(line => new StockLine
             {
-                ProductId = line.ProductId, Quantity = line.Quantity, UnitCost = line.UnitCost,
-                Sku = products[line.ProductId].Sku, ProductName = products[line.ProductId].Name,
+                ProductId = line.ProductId,
+                Quantity = line.Quantity,
+                UnitCost = line.UnitCost,
+                Sku = products[line.ProductId].Sku,
+                ProductName = products[line.ProductId].Name,
                 CountVersion = countVersions.GetValueOrDefault(line.ProductId)
             }).ToList()
         };
@@ -132,10 +141,11 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
 
     public async Task<StockDocumentResponse> ReverseAsync(int id, RequestActor actor, CancellationToken ct, bool linked = false)
     {
-        if (!linked && await db.OrderFulfillments.AnyAsync(x => x.StockDocumentId == id, ct))
-            throw ErpException.Conflict("linked_document", "Đảo phiếu từ đơn hàng nguồn để đối soát công nợ.");
         await using var transaction = linked ? null : await db.Database.BeginTransactionAsync(ct);
         var original = await LoadAsync(id, ct);
+        // Read the source first: an in-flight order posting may not have inserted its source link yet.
+        if (!linked && await db.OrderFulfillments.AnyAsync(x => x.StockDocumentId == id, ct))
+            throw ErpException.Conflict("linked_document", "Đảo phiếu từ đơn hàng nguồn để đối soát công nợ.");
         if (original.Status == StockStatus.Reversed)
         {
             var existing = await db.StockDocuments.Where(x => x.ReversesId == id).Select(x => x.Id).SingleAsync(ct);
@@ -160,12 +170,20 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
         var stamp = clock.GetUtcNow().UtcDateTime;
         var reversal = new StockDocument
         {
-            RequestId = Guid.NewGuid(), Kind = StockKind.Reversal, WarehouseId = original.WarehouseId,
-            DestinationId = original.DestinationId, ReversesId = original.Id, CreatedAtUtc = stamp,
+            RequestId = Guid.NewGuid(),
+            Kind = StockKind.Reversal,
+            WarehouseId = original.WarehouseId,
+            DestinationId = original.DestinationId,
+            ReversesId = original.Id,
+            CreatedAtUtc = stamp,
             Note = "Đảo chứng từ " + DocumentNumber(original.Kind, original.Id),
             Lines = original.Lines.Select(x => new StockLine
             {
-                ProductId = x.ProductId, Sku = x.Sku, ProductName = x.ProductName, Quantity = x.Quantity, UnitCost = x.UnitCost
+                ProductId = x.ProductId,
+                Sku = x.Sku,
+                ProductName = x.ProductName,
+                Quantity = x.Quantity,
+                UnitCost = x.UnitCost
             }).ToList()
         };
         reversal.Post(stamp);
@@ -252,8 +270,14 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
     private void RecordMovement(StockDocument doc, StockBalance balance, decimal delta, decimal unitCost, decimal previousCost,
         DateTime stamp) => db.StockMovements.Add(new StockMovement
         {
-            Document = doc, WarehouseId = balance.WarehouseId, ProductId = balance.ProductId, QuantityDelta = delta,
-            UnitCost = unitCost, PreviousAverageCost = previousCost, BalanceAfter = balance.OnHand, PostedAtUtc = stamp
+            Document = doc,
+            WarehouseId = balance.WarehouseId,
+            ProductId = balance.ProductId,
+            QuantityDelta = delta,
+            UnitCost = unitCost,
+            PreviousAverageCost = previousCost,
+            BalanceAfter = balance.OnHand,
+            PostedAtUtc = stamp
         });
 
     private void Audit(StockDocument doc, RequestActor actor, string action) =>
@@ -304,8 +328,12 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
     {
         var prefix = kind switch
         {
-            StockKind.Receipt => "PN", StockKind.Issue => "PX", StockKind.Transfer => "CK",
-            StockKind.Adjustment => "DC", StockKind.Count => "KK", _ => "DA"
+            StockKind.Receipt => "PN",
+            StockKind.Issue => "PX",
+            StockKind.Transfer => "CK",
+            StockKind.Adjustment => "DC",
+            StockKind.Count => "KK",
+            _ => "DA"
         };
         return $"{prefix}-{id:000000}";
     }

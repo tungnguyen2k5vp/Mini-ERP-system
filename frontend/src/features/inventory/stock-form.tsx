@@ -42,7 +42,7 @@ const schema = (kind: number) => z.object({
   })
 })
 
-type StockProduct = { id: string; sku: string; name: string; purchasePrice: number }
+type StockProduct = { id: string; sku: string; name: string; purchasePrice: number | null }
 type StockInput = z.infer<ReturnType<typeof schema>>
 const blankLine = { productId: '', quantity: 1, unitCost: undefined }
 
@@ -125,7 +125,7 @@ export function StockForm() {
               <select id={'product-' + line.id} aria-invalid={Boolean(error?.productId)}
                 {...form.register(`lines.${index}.productId`, { onChange: event => {
                   const selected = products.data?.find(row => row.id === event.target.value)
-                  if (selected && kind === 1) form.setValue(`lines.${index}.unitCost`, selected.purchasePrice)
+                  if (selected && kind === 1) form.setValue(`lines.${index}.unitCost`, selected.purchasePrice ?? undefined)
                 } })}>
                 <option value="">Chọn sản phẩm</option>
                 {products.data?.map(row => <option key={row.id} value={row.id}>{row.sku} · {row.name}</option>)}

@@ -153,7 +153,7 @@ test('sales reserve and partial shipment, mobile business workspaces and accessi
   await expect(page.getByRole('heading', { name: 'Tổng quan hoạt động' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Cần xử lý' })).toBeVisible()
   const firstDay = page
-    .getByRole('group', { name: 'Biểu đồ số lượng nhập xuất theo ngày' })
+    .getByRole('group', { name: 'Số phiếu nhập và phiếu xuất theo ngày' })
     .getByRole('button')
     .first()
   await firstDay.focus()

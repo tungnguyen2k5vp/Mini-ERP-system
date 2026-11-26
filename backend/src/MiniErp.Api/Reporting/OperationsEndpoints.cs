@@ -4,6 +4,8 @@ using MiniErp.Application.Auth;
 using MiniErp.Application.Reporting;
 using MiniErp.Domain;
 using MiniErp.Infrastructure.Reporting;
+using MiniErp.Application.Inventory;
+using MiniErp.Infrastructure.Inventory;
 
 namespace MiniErp.Api.Reporting;
 
@@ -19,6 +21,11 @@ internal static class OperationsEndpoints
             var(number,size)=ApiPaging.Validate(page,pageSize);
             return Results.Ok(await report.StockAsync(from,to,warehouseId,filter,number,size,ct));
         }).RequireAuthorization(Permissions.ViewReports,Permissions.ViewInventory).Produces<Page<StockReportRow>>();
+        api.MapGet("/reports/stock/reconciliation",async(Guid? warehouseId,Guid? productId,int? page,int? pageSize,InventoryReport report,CancellationToken ct)=>
+        {
+            var (number,size)=ApiPaging.Validate(page,pageSize);
+            return Results.Ok(await report.ReconciliationAsync(warehouseId,productId,number,size,ct));
+        }).RequireAuthorization(Permissions.ViewReports,Permissions.ViewInventory).Produces<Page<StockReconciliationRow>>();
         api.MapGet("/search",async(string? q,HttpContext http,IIdentityService identity,OperationsReport report,CancellationToken ct)=>
             Results.Ok(await report.SearchAsync(q,await Grants(http,identity,ct),ct))).RequireAuthorization().Produces<SearchHit[]>();
         api.MapGet("/audit",async(DateOnly? from,DateOnly? to,string? search,int? page,int? pageSize,OperationsReport report,CancellationToken ct)=>
@@ -26,8 +33,8 @@ internal static class OperationsEndpoints
             var(number,size)=ApiPaging.Validate(page,pageSize,search);
             return Results.Ok(await report.AuditAsync(from,to,search,number,size,ct));
         }).RequireAuthorization(Permissions.ViewAudit).Produces<Page<AuditRow>>();
-        api.MapGet("/catalog/products/workbook",async(ProductWorkbook workbook,CancellationToken ct)=>
-            Results.File(await workbook.ExportAsync(ct),"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","MiniErp-products.xlsx"))
+        api.MapGet("/catalog/products/workbook",async(HttpContext http,IIdentityService identity,ProductWorkbook workbook,CancellationToken ct)=>
+            Results.File(await workbook.ExportAsync(ct,FinancialFields.CatalogPrices((await Grants(http,identity,ct)).ToArray())),"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","MiniErp-products.xlsx"))
             .RequireAuthorization(Permissions.ViewCatalog,Permissions.ExportCatalog);
         api.MapPost("/catalog/products/workbook",async(HttpContext http,ProductWorkbook workbook,CancellationToken ct)=>
         {

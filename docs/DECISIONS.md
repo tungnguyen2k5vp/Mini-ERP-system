@@ -1,5 +1,14 @@
 # Decisions
 
+## V2 reporting and costing
+
+- Vietnam operational periods use UTC+07:00. Keep UTC event timestamps and range predicates on the original timestamp columns. Perform calendar-day grouping only after filtering.
+- On new sales, persist each stock line’s two-decimal posted COGS under the order lock in the posting transaction. A partial return receives its proportional share of the remaining recorded SKU cost. Returning the last unit of that SKU releases its exact residual. A reversal copies the original snapshots. Warehouse moving average continues to use four decimal places.
+- Retain document-level costing for any order with an unattributed historical sales fulfillment. The migration adds a nullable column with a nonnegative check. Source-cost diagnostics skip incomplete line attribution. No historical allocation is inferred.
+- For V1 commercial revenue, reconstruct the original line amount as the difference between two cumulative rounded amounts for the same order, SKU and shipment/return stream. Reverse the source amount verbatim. This keeps a rounding cent with the actual product on a later multi-line shipment.
+- Use serializable reads where a report compares multiple sources or result sets. Materialize expensive reusable groups for reconciliation. Binder parameters for exact finance cutoffs use `datetime2(7)`. SQL money aggregates are narrowed to `decimal(28,2)` before subtraction so SQL Server retains cents.
+- Cost visibility uses existing grants. Procurement and catalog price entry, historical stock valuation and internal financial balances serve different business tasks. [Permission matrix](API_PERMISSION_MATRIX.md)
+
 - Use the existing SQL Server 2022 Developer instance with separate MiniErp and MiniErp_Test databases. No runtime installation or service modification is needed for local verification.
 - Use one ASP.NET Core process and one SQL Server database. Group by module in code and schema. Keep order documents separate from inventory postings and finance entries so each records the time and quantity of its own event.
 - Use EF Core migrations and tracked writes. Use Dapper with SQL views and procedures for reporting reads.

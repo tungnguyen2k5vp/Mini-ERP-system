@@ -7,14 +7,12 @@ import { EmptyState, ErrorNotice, Loading } from '../../components/feedback'
 import { api, type Page, type Profile } from '../../lib/api'
 import { useDebouncedValue } from '../../lib/use-debounced-value'
 import { useLookupOptions } from '../catalog/listing'
-import { date, money } from '../../lib/format'
-
-const calendarDate = (value: string) =>
-  new Date(value).toLocaleDateString('vi-VN', { timeZone: 'UTC' })
+import { businessDate, calendarDate, date, money } from '../../lib/format'
+import { StockReconciliation } from './stock-reconciliation'
 
 type Dashboard = {
   metrics: { key: string; label: string; value: number; unit: string; href: string }[]
-  trend: { day: string; received: number; issued: number }[]
+  trend: { day: string; receiptCount: number; issueCount: number }[]
   profitTrend: { day: string; revenue: number; cost: number; grossProfit: number }[]
   topProducts: { productId: string; sku: string; name: string; quantity: number; revenue: number }[]
   alerts: { label: string; count: number; href: string }[]
@@ -89,11 +87,9 @@ const entityLabels: Record<string, string> = {
   Category: 'Nhóm hàng',
   PaymentMethod: 'Phương thức thanh toán',
 }
-export function usePeriod() {
-  const [from, setFrom] = useState(() =>
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1).toLocaleDateString('en-CA'),
-  )
-  const [to, setTo] = useState(() => new Date().toLocaleDateString('en-CA'))
+export function usePeriod(initial?: { from: string | null; to: string | null }) {
+  const [from, setFrom] = useState(() => initial?.from || businessDate().slice(0, 8) + '01')
+  const [to, setTo] = useState(() => initial?.to || businessDate())
   return { from, to, setFrom, setTo, parameters: new URLSearchParams({ from, to }).toString() }
 }
 function Period({
@@ -150,10 +146,11 @@ export function DashboardPage({ profile }: { profile: Profile }) {
   const chartPoints = query.data?.trend.slice(-14) ?? []
   const chartMaximum = Math.max(
     1,
-    ...chartPoints.map((point) => Math.max(point.received, point.issued)),
+    ...chartPoints.map((point) => Math.max(point.receiptCount, point.issueCount)),
   )
   const selectedPoint = chartPoints.find((point) => point.day === chartDay) ?? chartPoints.at(-1)
   const today = new Date().toLocaleDateString('vi-VN', {
+    timeZone: 'Asia/Ho_Chi_Minh',
     weekday: 'long',
     day: 'numeric',
     month: 'long',
@@ -217,15 +214,16 @@ export function DashboardPage({ profile }: { profile: Profile }) {
               </section>
               {profile.permissions.includes('Inventory.View') && (
                 <section className="panel">
-                  <h2>Nhập · xuất theo ngày</h2>
+                  <h2>Phiếu nhập · xuất theo ngày</h2>
                   <p className="page-description">
-                    Tối đa 14 ngày có phát sinh gần nhất. Chọn một ngày để xem số lượng chính xác.
+                    Đếm phiếu nhập và xuất đã ghi sổ ban đầu, kể cả phiếu được đảo sau đó; không gồm
+                    chuyển kho, điều chỉnh hoặc phiếu đảo. Tối đa 14 ngày có phát sinh gần nhất.
                   </p>
                   {query.data.trend.length ? (
                     <div
                       className="movement-chart"
                       role="group"
-                      aria-label="Biểu đồ số lượng nhập xuất theo ngày"
+                      aria-label="Số phiếu nhập và phiếu xuất theo ngày"
                     >
                       <span className="chart-scale" aria-hidden="true">
                         <span>{money(chartMaximum)}</span>
@@ -233,7 +231,7 @@ export function DashboardPage({ profile }: { profile: Profile }) {
                         <span>0</span>
                       </span>
                       {chartPoints.map((d) => {
-                        const label = `${calendarDate(d.day)}: nhập ${money(d.received)}, xuất ${money(d.issued)}`
+                        const label = `${calendarDate(d.day)}: ${money(d.receiptCount)} phiếu nhập, ${money(d.issueCount)} phiếu xuất`
                         return (
                           <button
                             type="button"
@@ -246,10 +244,12 @@ export function DashboardPage({ profile }: { profile: Profile }) {
                             onFocus={() => setChartDay(d.day)}
                           >
                             <span className="chart-bars" aria-hidden="true">
-                              <span style={{ height: `${(d.received / chartMaximum) * 100}%` }} />
-                              <span style={{ height: `${(d.issued / chartMaximum) * 100}%` }} />
+                              <span
+                                style={{ height: `${(d.receiptCount / chartMaximum) * 100}%` }}
+                              />
+                              <span style={{ height: `${(d.issueCount / chartMaximum) * 100}%` }} />
                             </span>
-                            <small>{new Date(d.day).getUTCDate()}</small>
+                            <small>{Number(businessDate(d.day).slice(-2))}</small>
                           </button>
                         )
                       })}
@@ -258,13 +258,13 @@ export function DashboardPage({ profile }: { profile: Profile }) {
                     <EmptyState>Chưa có biến động kho trong kỳ này.</EmptyState>
                   )}
                   <div className="chart-legend">
-                    <span>Nhập kho</span>
-                    <span>Xuất kho</span>
+                    <span>Phiếu nhập</span>
+                    <span>Phiếu xuất</span>
                   </div>
                   {selectedPoint && (
                     <output className="chart-readout" aria-live="polite">
-                      {calendarDate(selectedPoint.day)} · Nhập {money(selectedPoint.received)} ·
-                      Xuất {money(selectedPoint.issued)}
+                      {calendarDate(selectedPoint.day)} · {money(selectedPoint.receiptCount)} phiếu
+                      nhập · {money(selectedPoint.issueCount)} phiếu xuất
                     </output>
                   )}
                   <details className="chart-data">
@@ -274,16 +274,16 @@ export function DashboardPage({ profile }: { profile: Profile }) {
                         <thead>
                           <tr>
                             <th>Ngày</th>
-                            <th>Nhập</th>
-                            <th>Xuất</th>
+                            <th>Phiếu nhập</th>
+                            <th>Phiếu xuất</th>
                           </tr>
                         </thead>
                         <tbody>
                           {query.data.trend.map((t) => (
                             <tr key={t.day}>
-                              <td>{t.day.slice(0, 10)}</td>
-                              <td>{money(t.received)}</td>
-                              <td>{money(t.issued)}</td>
+                              <td>{calendarDate(t.day)}</td>
+                              <td>{money(t.receiptCount)}</td>
+                              <td>{money(t.issueCount)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -382,7 +382,8 @@ export function DashboardPage({ profile }: { profile: Profile }) {
 
 export function ReportsPage({ profile }: { profile: Profile }) {
   const [params] = useSearchParams()
-  const period = usePeriod()
+  const currentDiagnostics = params.get('view') === 'reconciliation'
+  const period = usePeriod({ from: params.get('from'), to: params.get('to') })
   const [page, setPage] = useState(1)
   const [warehouse, setWarehouse] = useState('')
   const [filter, setFilter] = useState(
@@ -402,22 +403,42 @@ export function ReportsPage({ profile }: { profile: Profile }) {
         `/reports/stock?${period.parameters}&page=${page}&pageSize=20${warehouse ? '&warehouseId=' + encodeURIComponent(warehouse) : ''}&filter=${filter}`,
         { signal },
       ),
+    enabled: !currentDiagnostics,
   })
   return (
     <>
       <header className="page-heading">
         <div>
-          <h1>Báo cáo nhập xuất tồn</h1>
+          <h1>{currentDiagnostics ? 'Đối soát tồn kho' : 'Báo cáo nhập xuất tồn'}</h1>
           <p className="page-description">
-            Đối chiếu số dư đầu kỳ, luân chuyển và cuối kỳ từ sổ kho.
+            {currentDiagnostics
+              ? 'Kiểm tra hàng đang có và hàng đã giữ theo từng kho, từng SKU.'
+              : 'Đối chiếu số dư đầu kỳ, luân chuyển và cuối kỳ từ sổ kho theo ngày Việt Nam.'}
           </p>
         </div>
-        <Period period={period} onChange={() => setPage(1)} />
+        {!currentDiagnostics && <Period period={period} onChange={() => setPage(1)} />}
       </header>
+      <nav className="action-row reconciliation-note" aria-label="Chế độ báo cáo kho">
+        <Link
+          className={'button ' + (!currentDiagnostics ? 'button-primary' : 'button-outline')}
+          aria-current={!currentDiagnostics ? 'page' : undefined}
+          to={'/bao-cao?' + period.parameters}
+        >
+          Báo cáo theo kỳ
+        </Link>
+        <Link
+          className={'button ' + (currentDiagnostics ? 'button-primary' : 'button-outline')}
+          aria-current={currentDiagnostics ? 'page' : undefined}
+          to={'/bao-cao?' + period.parameters + '&view=reconciliation'}
+        >
+          Đối soát hiện tại
+        </Link>
+      </nav>
       <div className="table-toolbar">
         <label className="filter-select">
           <span className="sr-only">Kho báo cáo</span>
           <select
+            aria-label="Kho báo cáo"
             value={warehouse}
             disabled={!profile.permissions.includes('Catalog.View')}
             onChange={(e) => {
@@ -433,28 +454,32 @@ export function ReportsPage({ profile }: { profile: Profile }) {
             ))}
           </select>
         </label>
-        <label className="filter-select">
-          <span className="sr-only">Tình trạng hàng tồn</span>
-          <select
-            value={filter}
-            onChange={(e) => {
-              setFilter(e.target.value)
-              setPage(1)
-            }}
-          >
-            <option value="all">Tất cả hàng hóa</option>
-            <option value="low">Dưới định mức</option>
-            <option value="slow">Không luân chuyển 90 ngày</option>
-          </select>
-        </label>
+        {!currentDiagnostics && (
+          <label className="filter-select">
+            <span className="sr-only">Tình trạng hàng tồn</span>
+            <select
+              value={filter}
+              onChange={(e) => {
+                setFilter(e.target.value)
+                setPage(1)
+              }}
+            >
+              <option value="all">Tất cả hàng hóa</option>
+              <option value="low">Dưới định mức</option>
+              <option value="slow">Không luân chuyển 90 ngày</option>
+            </select>
+          </label>
+        )}
         {profile.permissions.includes('Finance.View') && (
           <Link className="button button-outline" to="/tai-chinh">
             Báo cáo công nợ
           </Link>
         )}
       </div>
-      <ErrorNotice error={query.error ?? warehouses.error} />
-      {query.isPending ? (
+      <ErrorNotice error={(currentDiagnostics ? null : query.error) ?? warehouses.error} />
+      {currentDiagnostics ? (
+        <StockReconciliation key={warehouse} warehouseId={warehouse} />
+      ) : query.isPending ? (
         <Loading />
       ) : (
         query.data && (

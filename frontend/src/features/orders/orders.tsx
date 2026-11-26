@@ -26,7 +26,7 @@ type Order = {
   partnerId: string
   partnerName: string
   warehouseName: string
-  total: number
+  total: number | null
   createdAtUtc: string
   version: string
 }
@@ -35,7 +35,7 @@ type Line = {
   sku: string
   productName: string
   quantity: number
-  unitPrice: number
+  unitPrice: number | null
   fulfilledQuantity: number
   returnedQuantity: number
   reservedQuantity: number
@@ -50,7 +50,7 @@ type Detail = {
     isReturn: boolean
     reversesId: number | null
     createdAtUtc: string
-    amount: number
+    amount: number | null
   }[]
 }
 const statuses = ['', 'Nháp', 'Chờ duyệt', 'Đã duyệt', 'Thực hiện một phần', 'Hoàn thành', 'Đã hủy']
@@ -67,7 +67,7 @@ function useOrderOptions(kind: number) {
           id: string
           sku: string
           name: string
-          purchasePrice: number
+          purchasePrice: number | null
           salePrice: number
         }[]
       }>('/orders/options?kind=' + kind, { signal }),
@@ -211,6 +211,8 @@ export function OrdersPage({ kind, profile }: { kind: number; profile: Profile }
               {
                 accessorKey: 'total',
                 header: 'Giá trị (VND)',
+                enableSorting: kind === 2 || profile.permissions.some(p =>
+                  ['Reports.Sensitive', 'Purchasing.Create', 'Purchasing.Approve'].includes(p)),
                 cell: ({ row }) => <span className="number">{money(row.original.total)}</span>,
               },
               {

@@ -1,5 +1,16 @@
 # API
 
+## V2 milestone 1
+
+| Read | Contract |
+| --- | --- |
+| `GET /reports/stock/reconciliation` | Current exceptions by warehouse and SKU. Optional `warehouseId`, `productId`, `page`, `pageSize`. Returns ledger quantity, on-hand, recorded reservations, remaining commitment, inconsistent line count and balance presence. An empty page with total zero is a clean scope. |
+| `GET /finance/reconciliation/exceptions` | Optional `asOfDate` or `asOf`, `orderId`, `direction`, `page`, `pageSize`. Returns individual source, allocation, refund and authorized cost exceptions, including expected/actual values or references, source IDs and cutoff metadata. |
+| `GET /finance/aging` and `/finance/reconciliation` | `asOfDate=YYYY-MM-DD` includes the full Vietnam calendar day. Exact `asOf=...Z` remains inclusive at 100 ns precision. Supplying both returns 400. |
+| `GET /reports/dashboard`, `/reports/stock`, `/audit` | Date filters are inclusive local calendar dates, converted to an inclusive UTC start and exclusive UTC end. The dashboard exposes `stockSkuCount` and daily `receiptCount` / `issueCount`; these count original posted receipt/issue documents, including ones subsequently corrected. Transfers, counts, adjustments and reversal documents are excluded from those counts. |
+
+The permissions matrix covers record access, purchase prices, cost, export cells and restricted sorts. [API permissions](API_PERMISSION_MATRIX.md)
+
 Base URL is http://127.0.0.1:5168/api/v1 in local development. OpenAPI is available at [openapi/v1.json](http://127.0.0.1:5168/openapi/v1.json). Use the Vite origin on port 5186 for browser requests. The live and readiness endpoints are /health/live and /health/ready.
 
 | Method and route | Behavior |

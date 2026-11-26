@@ -1,5 +1,17 @@
 # Code review checkpoint
 
+## V2 milestone 1
+
+| Finding | Correction and regression |
+| --- | --- |
+| Standalone reversal checked fulfillment ownership before loading the committed stock document. | Load the source in the reversal transaction before checking its link. Verify linked documents reject direct reversal and order reversal preserves source cents. Cancellation retries produce one audit entry. |
+| Aggregate debt comparisons could hide a missing invoice, invalid cash allocation or mispriced line. | Compare invoice, order, fulfillment, stock and allocation facts by source. Rollback-only fixtures introduce missing and mismatched records. Incomplete historical cost attribution is excluded from the cost check. |
+| Opposite reservation errors on two order lines could produce the correct warehouse total. | Compare stored line states and quantities with net linked postings independently before aggregating by warehouse and SKU. |
+| Rounding each shipment and credit separately could settle SKU A's remaining cost on SKU B. | Save per-line cents and allocate remaining cost per SKU. Exact reversals copy the source snapshot. The historical document-only path remains available. |
+| A multi-statement finance read could mix commits. Serializable readers also competed with a writer through different indexes. | Use a single read transaction. Retry an entire pure invoice/payment page only for SQL Server deadlock 1205, with a bounded attempt count. An orchestrated reader/writer regression accepts either consistent serial ordering. |
+| Cost fields reached ordinary catalog/warehouse roles, including through workbook export. Purchase sorting could also disclose the ranking of restricted amounts. | Apply current server-side financial field rules to JSON, sort and workbook responses. Regression tests exercise six ordinary roles, permission revocation with a live token, warehouse posting and printed detail. |
+| Dashboard, audit and finance used different end-of-day semantics. Widened SQL SUM expressions could drop cents on subtraction. | Explicit Vietnam-day ranges, datetime2 parameters and fixed-scale intermediate arithmetic. SQL regression checks year rollover, the last 100 ns, signed one-cent debt and split-line attribution. |
+
 ## Upgrade review
 
 - A clean online npm install exposed missing entries that an offline dry run hid. Regenerating from pinned dependencies and verifying real installation closed this gap.

@@ -16,7 +16,7 @@ public sealed record ProductInput(
 
 /// <summary>Product detail and references translated to their display names.</summary>
 public sealed record ProductResponse(Guid Id, string Sku, string Name, Guid CategoryId, string CategoryName,
-    Guid UnitId, string UnitName, decimal PurchasePrice, decimal SalePrice, decimal MinimumStock,
+    Guid UnitId, string UnitName, decimal? PurchasePrice, decimal SalePrice, decimal MinimumStock,
     string? Description, string? ImageUrl, bool IsActive, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, byte[] Version);
 
 /// <summary>Editable code, name and active status for catalog reference records.</summary>

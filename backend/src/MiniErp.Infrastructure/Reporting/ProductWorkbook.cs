@@ -19,7 +19,7 @@ public sealed class ProductWorkbook(ErpDbContext db, TimeProvider clock)
     private const int MaxCompressed = 2 * 1024 * 1024;
     private const int MaxExpanded = 16 * 1024 * 1024;
 
-    public async Task<byte[]> ExportAsync(CancellationToken ct)
+    public async Task<byte[]> ExportAsync(CancellationToken ct, bool includePurchasePrices = true)
     {
         var rows = await db.Products.AsNoTracking().OrderBy(x => x.Sku).Take(10001)
             .Select(x => new { x.Sku, x.Name, Category = x.Category.Code, Unit = x.Unit.Code, x.PurchasePrice, x.SalePrice, x.MinimumStock, x.IsActive }).ToArrayAsync(ct);
@@ -40,7 +40,7 @@ public sealed class ProductWorkbook(ErpDbContext db, TimeProvider clock)
             for (var i = 0; i < rows.Length; i++)
             {
                 var r = rows[i];
-                AddRow(data, i + 2, [r.Sku, r.Name, r.Category, r.Unit, r.PurchasePrice.ToString(CultureInfo.InvariantCulture), r.SalePrice.ToString(CultureInfo.InvariantCulture), r.MinimumStock.ToString(CultureInfo.InvariantCulture), r.IsActive ? "true" : "false"]);
+                AddRow(data, i + 2, [r.Sku, r.Name, r.Category, r.Unit, includePurchasePrices ? r.PurchasePrice.ToString(CultureInfo.InvariantCulture) : "", r.SalePrice.ToString(CultureInfo.InvariantCulture), r.MinimumStock.ToString(CultureInfo.InvariantCulture), r.IsActive ? "true" : "false"]);
             }
             Write(zip, "xl/worksheets/sheet1.xml", new XDocument(new XElement(Sheet + "worksheet", data)));
         }

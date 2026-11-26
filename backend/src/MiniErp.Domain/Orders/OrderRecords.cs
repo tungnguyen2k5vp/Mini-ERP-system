@@ -23,6 +23,7 @@ public sealed class TradeOrder
     public void Approve() { Require(OrderStatus.PendingApproval); Status = OrderStatus.Approved; }
     public void Cancel()
     {
+        if (Status == OrderStatus.Cancelled) return;
         if (Status == OrderStatus.Fulfilled) throw ErpException.Conflict("invalid_status", "Đơn đã hoàn tất; hãy lập phiếu trả hàng.");
         Status = OrderStatus.Cancelled;
     }

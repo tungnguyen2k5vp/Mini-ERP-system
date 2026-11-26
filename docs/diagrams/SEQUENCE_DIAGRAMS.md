@@ -51,6 +51,7 @@ sequenceDiagram
     C->>D: Check request, remaining units and reservation
     C->>I: Issue actual units in shared transaction
     I->>D: Update balance and record ledger cost
+    C->>D: Attribute posted sales cost by SKU if order history permits
     C->>F: Stage invoice for posted stock document
     F->>D: Record source, amount, due date and cost
     C->>D: Save fulfillment and audit, commit

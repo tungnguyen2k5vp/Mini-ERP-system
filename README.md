@@ -6,6 +6,8 @@ Trace a purchase receipt or a sales shipment from its approved order through the
 
 ## Available workflows
 
+V2 milestone 1 adds read-only stock and financial discrepancy reports, source-level sales cost snapshots and Vietnam business-day cutoffs. Open **Báo cáo tồn kho → Đối soát hiện tại** or **Công nợ & thanh toán → Đối soát** on the seeded preview. [V2 roadmap](docs/UPGRADE_V2_PLAN.md) · [Permissions](docs/API_PERMISSION_MATRIX.md)
+
 - Sign in, refresh a session, change a password and administer accounts, roles and permission grants.
 - Search, filter, create, edit and deactivate catalog and partner records.
 - Draft, post and reverse receipts, issues, transfers, adjustments and counts. View stock balances, low-stock positions and movements with their recorded costs.

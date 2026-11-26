@@ -258,6 +258,7 @@ tbody tr:hover { background: #f9fbf8; }
 #finance-content .record-link { white-space: nowrap; }
 #finance-content td:nth-child(3) { min-width: 160px; }
 .selected-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; font-size: .85rem; color: var(--muted); }
+.exception-sources { display: grid; gap: .5rem; }
 .print-only { display: none; }
 .workbook-tools { margin-bottom: 1rem; }
 .global-search { width: min(100%, 620px); margin-bottom: 1.5rem; }

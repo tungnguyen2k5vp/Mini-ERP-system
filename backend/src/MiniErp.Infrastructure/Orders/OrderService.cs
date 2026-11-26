@@ -16,35 +16,35 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
     public static string Number(OrderKind kind, int id) => $"{(kind == OrderKind.Purchase ? "PO" : "SO")}-{id:000000}";
     public async Task<OrderKind> KindAsync(int id, CancellationToken ct) => await db.Orders.Where(x => x.Id == id).Select(x => (OrderKind?)x.Kind)
         .SingleOrDefaultAsync(ct) ?? throw ErpException.Missing("order_missing", "Không tìm thấy đơn.");
-    public async Task<OrderOptions> OptionsAsync(OrderKind kind,CancellationToken ct)
+    public async Task<OrderOptions> OptionsAsync(OrderKind kind, CancellationToken ct)
     {
-        var partnerKind=kind==OrderKind.Purchase?PartnerKind.Supplier:PartnerKind.Customer;
-        var partners=await db.Partners.Where(x=>x.Kind==partnerKind).OrderBy(x=>x.Name).ThenBy(x=>x.Id).Select(x=>new OrderOption(x.Id,x.Name,x.IsActive)).ToArrayAsync(ct);
-        var warehouses=await db.Lookups.Where(x=>x.Kind==LookupKind.Warehouse && x.IsActive).OrderBy(x=>x.Name).ThenBy(x=>x.Id).Select(x=>new OrderOption(x.Id,x.Name,x.IsActive)).ToArrayAsync(ct);
-        var products=await db.Products.Where(x=>x.IsActive).OrderBy(x=>x.Sku).Select(x=>new OrderProductOption(x.Id,x.Sku,x.Name,x.PurchasePrice,x.SalePrice)).ToArrayAsync(ct);
-        return new(partners,warehouses,products);
+        var partnerKind = kind == OrderKind.Purchase ? PartnerKind.Supplier : PartnerKind.Customer;
+        var partners = await db.Partners.Where(x => x.Kind == partnerKind).OrderBy(x => x.Name).ThenBy(x => x.Id).Select(x => new OrderOption(x.Id, x.Name, x.IsActive)).ToArrayAsync(ct);
+        var warehouses = await db.Lookups.Where(x => x.Kind == LookupKind.Warehouse && x.IsActive).OrderBy(x => x.Name).ThenBy(x => x.Id).Select(x => new OrderOption(x.Id, x.Name, x.IsActive)).ToArrayAsync(ct);
+        var products = await db.Products.Where(x => x.IsActive).OrderBy(x => x.Sku).Select(x => new OrderProductOption(x.Id, x.Sku, x.Name, x.PurchasePrice, x.SalePrice)).ToArrayAsync(ct);
+        return new(partners, warehouses, products);
     }
     public async Task<Page<OrderRow>> ListAsync(OrderKind kind, Guid? partnerId, int page, int size, CancellationToken ct,
-        string? search=null,OrderStatus? status=null,string? sort=null,bool descending=true)
+        string? search = null, OrderStatus? status = null, string? sort = null, bool descending = true)
     {
         var query = db.Orders.AsNoTracking().Where(x => x.Kind == kind && (partnerId == null || x.PartnerId == partnerId));
-        if (status.HasValue) query=query.Where(x=>x.Status==status);
+        if (status.HasValue) query = query.Where(x => x.Status == status);
         if (!string.IsNullOrWhiteSpace(search))
         {
-            var text=search.Trim();
-            var numberText=text.Contains('-')?text[(text.LastIndexOf('-')+1)..]:text;
-            int.TryParse(numberText,out var number);
-            query=query.Where(x=>x.Partner.Name.Contains(text) || x.Id==number);
+            var text = search.Trim();
+            var numberText = text.Contains('-') ? text[(text.LastIndexOf('-') + 1)..] : text;
+            int.TryParse(numberText, out var number);
+            query = query.Where(x => x.Partner.Name.Contains(text) || x.Id == number);
         }
         var total = await query.CountAsync(ct);
-        IOrderedQueryable<TradeOrder> ordered=sort switch
+        IOrderedQueryable<TradeOrder> ordered = sort switch
         {
-            "status"=>descending?query.OrderByDescending(x=>x.Status):query.OrderBy(x=>x.Status),
-            "total"=>descending?query.OrderByDescending(x=>x.Lines.Sum(l=>Math.Round(l.Quantity*l.UnitPrice,2))):query.OrderBy(x=>x.Lines.Sum(l=>Math.Round(l.Quantity*l.UnitPrice,2))),
-            "createdAtUtc"=>descending?query.OrderByDescending(x=>x.CreatedAtUtc):query.OrderBy(x=>x.CreatedAtUtc),
-            _=>descending?query.OrderByDescending(x=>x.Id):query.OrderBy(x=>x.Id)
+            "status" => descending ? query.OrderByDescending(x => x.Status) : query.OrderBy(x => x.Status),
+            "total" => descending ? query.OrderByDescending(x => x.Lines.Sum(l => Math.Round(l.Quantity * l.UnitPrice, 2))) : query.OrderBy(x => x.Lines.Sum(l => Math.Round(l.Quantity * l.UnitPrice, 2))),
+            "createdAtUtc" => descending ? query.OrderByDescending(x => x.CreatedAtUtc) : query.OrderBy(x => x.CreatedAtUtc),
+            _ => descending ? query.OrderByDescending(x => x.Id) : query.OrderBy(x => x.Id)
         };
-        var data = await ordered.ThenBy(x=>x.Id).Include(x => x.Partner).Include(x => x.Warehouse).Include(x => x.Lines)
+        var data = await ordered.ThenBy(x => x.Id).Include(x => x.Partner).Include(x => x.Warehouse).Include(x => x.Lines)
             .Skip((page - 1) * size).Take(size).ToArrayAsync(ct);
         return new(data.Select(Row).ToArray(), page, size, total);
     }
@@ -64,7 +64,7 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
         var note = CatalogRules.OptionalText(input.Note);
         if (note?.Length > 300) throw ErpException.Invalid("invalid_note", "Ghi chú tối đa 300 ký tự.");
         foreach (var line in input.Lines) { StockBalance.RequirePositive(line.Quantity); CatalogRules.NonNegative(line.UnitPrice); }
-        if (input.Lines.Sum(x => decimal.Round(x.Quantity * x.UnitPrice,2,MidpointRounding.AwayFromZero)) > 999_999_999_999m)
+        if (input.Lines.Sum(x => decimal.Round(x.Quantity * x.UnitPrice, 2, MidpointRounding.AwayFromZero)) > 999_999_999_999m)
             throw ErpException.Invalid("order_total_exceeded", "Tổng tiền đơn vượt giới hạn cho phép.");
         var prior = await db.Orders.Include(x => x.Lines).SingleOrDefaultAsync(x => x.RequestId == input.RequestId, ct);
         if (prior is not null)
@@ -80,9 +80,24 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
         if (products.Count != ids.Length || !await db.Partners.AnyAsync(x => x.Id == input.PartnerId && x.Kind == partnerKind && x.IsActive, ct) ||
             !await db.Lookups.AnyAsync(x => x.Id == input.WarehouseId && x.Kind == LookupKind.Warehouse && x.IsActive, ct))
             throw ErpException.Invalid("invalid_reference", "Chọn đối tác, kho và sản phẩm đang sử dụng.");
-        var order = new TradeOrder { RequestId = input.RequestId, Kind = input.Kind, PartnerId = input.PartnerId, WarehouseId = input.WarehouseId,
-            Note = note, CreatedAtUtc = Now, UpdatedAtUtc = Now, Lines = input.Lines.Select(x => new OrderLine { ProductId = x.ProductId,
-                Sku = products[x.ProductId].Sku, ProductName = products[x.ProductId].Name, Quantity = x.Quantity, UnitPrice = x.UnitPrice }).ToList() };
+        var order = new TradeOrder
+        {
+            RequestId = input.RequestId,
+            Kind = input.Kind,
+            PartnerId = input.PartnerId,
+            WarehouseId = input.WarehouseId,
+            Note = note,
+            CreatedAtUtc = Now,
+            UpdatedAtUtc = Now,
+            Lines = input.Lines.Select(x => new OrderLine
+            {
+                ProductId = x.ProductId,
+                Sku = products[x.ProductId].Sku,
+                ProductName = products[x.ProductId].Name,
+                Quantity = x.Quantity,
+                UnitPrice = x.UnitPrice
+            }).ToList()
+        };
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         db.Orders.Add(order);
         await db.SaveChangesAsync(ct);
@@ -93,9 +108,12 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
     }
     public async Task<OrderDetail> TransitionAsync(int id, string action, OrderVersion input, RequestActor actor, CancellationToken ct)
     {
+        if (action is not ("submit" or "approve" or "cancel"))
+            throw ErpException.Invalid("invalid_order_transition", "Thao tác chuyển trạng thái không hợp lệ.");
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockOrderAsync(id, ct);
         var order = await LoadAsync(id, ct);
+        if (action == "cancel" && order.Status == OrderStatus.Cancelled) return await DetailAsync(id, ct);
         if (input.Version != Convert.ToBase64String(order.Version)) throw ErpException.Conflict("stale_version", "Đơn đã thay đổi. Hãy tải lại.");
         if (action == "submit") order.Submit();
         else if (action == "approve")
@@ -108,7 +126,7 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
                     balance.Reserve(line.Quantity); line.ReservedQuantity = line.Quantity;
                 }
         }
-        else
+        else if (action == "cancel")
         {
             order.Cancel();
             foreach (var line in order.Lines.Where(x => x.ReservedQuantity > 0).OrderBy(x => x.ProductId))
@@ -146,8 +164,14 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
         if (!input.IsReturn && order.Status is OrderStatus.Fulfilled or OrderStatus.Cancelled)
             throw ErpException.Conflict("invalid_status", "Đơn đã đóng.");
         var incoming = order.Kind == OrderKind.Purchase != input.IsReturn;
-        var doc = new StockDocument { RequestId = input.RequestId, Kind = incoming ? StockKind.Receipt : StockKind.Issue,
-            WarehouseId = order.WarehouseId, Note = (input.IsReturn ? "Trả hàng " : "Thực hiện ") + Number(order.Kind,id), CreatedAtUtc = Now };
+        var doc = new StockDocument
+        {
+            RequestId = input.RequestId,
+            Kind = incoming ? StockKind.Receipt : StockKind.Issue,
+            WarehouseId = order.WarehouseId,
+            Note = (input.IsReturn ? "Trả hàng " : "Thực hiện ") + Number(order.Kind, id),
+            CreatedAtUtc = Now
+        };
         decimal amount = 0;
         foreach (var item in input.Lines.OrderBy(x => x.ProductId))
         {
@@ -162,13 +186,14 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
                 line.ReturnedQuantity += item.Quantity;
                 if (order.Kind == OrderKind.Sales)
                 {
-                    var movements = await (from f in db.OrderFulfillments join m in db.StockMovements on f.StockDocumentId equals m.DocumentId
-                        where f.OrderId == id && (m.Document.Status == StockStatus.Posted || m.Document.Status == StockStatus.Reversed) && m.ProductId == item.ProductId
-                        select new { m.QuantityDelta, m.UnitCost }).ToArrayAsync(ct);
+                    var movements = await (from f in db.OrderFulfillments
+                                           join m in db.StockMovements on f.StockDocumentId equals m.DocumentId
+                                           where f.OrderId == id && (m.Document.Status == StockStatus.Posted || m.Document.Status == StockStatus.Reversed) && m.ProductId == item.ProductId
+                                           select new { m.QuantityDelta, m.UnitCost }).ToArrayAsync(ct);
                     var outstandingQuantity = movements.Sum(x => -x.QuantityDelta);
                     if (outstandingQuantity <= 0)
                         throw ErpException.Conflict("quantity_exceeded", "Không còn số lượng đã giao để trả.");
-                    cost = decimal.Round(Math.Max(0, movements.Sum(x => -x.QuantityDelta * x.UnitCost)) / outstandingQuantity,4,MidpointRounding.AwayFromZero);
+                    cost = decimal.Round(Math.Max(0, movements.Sum(x => -x.QuantityDelta * x.UnitCost)) / outstandingQuantity, 4, MidpointRounding.AwayFromZero);
                 }
             }
             else
@@ -180,17 +205,30 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
                     line.ReservedQuantity -= item.Quantity;
                 }
             }
-            doc.Lines.Add(new StockLine { ProductId = item.ProductId, Sku = line.Sku, ProductName = line.ProductName,
-                Quantity = item.Quantity, UnitCost = incoming ? cost : null });
+            doc.Lines.Add(new StockLine
+            {
+                ProductId = item.ProductId,
+                Sku = line.Sku,
+                ProductName = line.ProductName,
+                Quantity = item.Quantity,
+                UnitCost = incoming ? cost : null
+            });
             amount += Money.Round((beforeQuantity + item.Quantity) * line.UnitPrice) - Money.Round(beforeQuantity * line.UnitPrice);
         }
         db.StockDocuments.Add(doc);
         order.RefreshStatus(); order.UpdatedAtUtc = Now;
         db.Entry(order).Property(x => x.UpdatedAtUtc).IsModified = true;
         await db.SaveChangesAsync(ct);
-        await stock.PostAsync(doc.Id, actor, ct, linked:true);
-        db.OrderFulfillments.Add(new OrderFulfillment { OrderId = id, RequestId = input.RequestId, StockDocumentId = doc.Id,
-            IsReturn = input.IsReturn, CreatedAtUtc = Now, Amount = amount });
+        await stock.PostAsync(doc.Id, actor, ct, linked: true);
+        db.OrderFulfillments.Add(new OrderFulfillment
+        {
+            OrderId = id,
+            RequestId = input.RequestId,
+            StockDocumentId = doc.Id,
+            IsReturn = input.IsReturn,
+            CreatedAtUtc = Now,
+            Amount = amount
+        });
         await AddFinanceAsync(order, doc.Id, input.IsReturn, amount, ct);
         Audit(order, actor, input.IsReturn ? "ReturnOrder" : "FulfillOrder");
         await db.SaveChangesAsync(ct);
@@ -201,10 +239,10 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockOrderAsync(id, ct);
-        var order = await LoadAsync(id,ct);
-        var original = await db.OrderFulfillments.SingleOrDefaultAsync(x => x.Id == fulfillmentId && x.OrderId == id,ct)
+        var order = await LoadAsync(id, ct);
+        var original = await db.OrderFulfillments.SingleOrDefaultAsync(x => x.Id == fulfillmentId && x.OrderId == id, ct)
             ?? throw ErpException.Missing("fulfillment_missing", "Không tìm thấy phiếu thực hiện.");
-        if (await db.OrderFulfillments.AnyAsync(x => x.ReversesId == fulfillmentId,ct)) return await DetailAsync(id,ct);
+        if (await db.OrderFulfillments.AnyAsync(x => x.ReversesId == fulfillmentId, ct)) return await DetailAsync(id, ct);
         if (original.ReversesId != null) throw ErpException.Conflict("invalid_reversal", "Không thể đảo phiếu đảo.");
         var lines = await db.StockDocuments.Where(x => x.Id == original.StockDocumentId).SelectMany(x => x.Lines).ToArrayAsync(ct);
         foreach (var item in lines)
@@ -218,28 +256,85 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
                 line.FulfilledQuantity -= item.Quantity;
             }
         }
-        var reversal = await stock.ReverseAsync(original.StockDocumentId,actor,ct,linked:true);
+        var reversal = await stock.ReverseAsync(original.StockDocumentId, actor, ct, linked: true);
         if (!original.IsReturn && order.Kind == OrderKind.Sales && order.Status != OrderStatus.Cancelled)
             foreach (var item in lines)
             {
-                (await BalanceAsync(order.WarehouseId,item.ProductId,ct)).Reserve(item.Quantity);
+                (await BalanceAsync(order.WarehouseId, item.ProductId, ct)).Reserve(item.Quantity);
                 order.Lines.Single(x => x.ProductId == item.ProductId).ReservedQuantity += item.Quantity;
             }
         order.RefreshStatus(); order.UpdatedAtUtc = Now;
         db.Entry(order).Property(x => x.UpdatedAtUtc).IsModified = true;
-        db.OrderFulfillments.Add(new OrderFulfillment { OrderId = id, RequestId = Guid.NewGuid(), StockDocumentId = reversal.Document.Id,
-            IsReturn = !original.IsReturn, ReversesId = original.Id, CreatedAtUtc = Now, Amount = original.Amount });
-        await AddFinanceAsync(order,reversal.Document.Id,!original.IsReturn,original.Amount,ct);
-        Audit(order,actor,"ReverseFulfillment");
+        db.OrderFulfillments.Add(new OrderFulfillment
+        {
+            OrderId = id,
+            RequestId = Guid.NewGuid(),
+            StockDocumentId = reversal.Document.Id,
+            IsReturn = !original.IsReturn,
+            ReversesId = original.Id,
+            CreatedAtUtc = Now,
+            Amount = original.Amount
+        });
+        await AddFinanceAsync(order, reversal.Document.Id, !original.IsReturn, original.Amount, ct);
+        Audit(order, actor, "ReverseFulfillment");
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
-        return await DetailAsync(id,ct);
+        return await DetailAsync(id, ct);
     }
-    private async Task AddFinanceAsync(TradeOrder order,int stockId,bool credit,decimal amount,CancellationToken ct)
+    private async Task AddFinanceAsync(TradeOrder order, int stockId, bool credit, decimal amount, CancellationToken ct)
     {
-        var movements = await db.StockMovements.Where(x => x.DocumentId == stockId).Select(x => new {x.QuantityDelta,x.UnitCost}).ToArrayAsync(ct);
-        var cost = movements.Sum(x => decimal.Round(Math.Abs(x.QuantityDelta)*x.UnitCost,2,MidpointRounding.AwayFromZero));
+        var movements = await db.StockMovements.Where(x => x.DocumentId == stockId).Select(x => new { x.ProductId, x.QuantityDelta, x.UnitCost }).ToArrayAsync(ct);
+        var cost = movements.Sum(x => decimal.Round(Math.Abs(x.QuantityDelta) * x.UnitCost, 2, MidpointRounding.AwayFromZero));
         var reversesId = await db.StockDocuments.Where(x => x.Id == stockId).Select(x => x.ReversesId).SingleAsync(ct);
-        if (reversesId is { } originalId)
+        var attributed = order.Kind == OrderKind.Sales && !await (
+            from f in db.OrderFulfillments
+            join l in db.Set<StockLine>() on f.StockDocumentId equals l.DocumentId
+            where f.OrderId == order.Id && l.PostedSalesCost == null
+            select l.ProductId).AnyAsync(ct);
+        if (attributed)
+        {
+            var lines = await db.Set<StockLine>().Where(x => x.DocumentId == stockId).ToArrayAsync(ct);
+            if (reversesId is { } sourceId)
+            {
+                var source = await db.Set<StockLine>().Where(x => x.DocumentId == sourceId)
+                    .ToDictionaryAsync(x => x.ProductId, x => x.PostedSalesCost!.Value, ct);
+                var sourceTotal = await db.Set<FinanceInvoice>().Where(x => x.StockDocumentId == sourceId)
+                    .Select(x => x.CostAmount).SingleAsync(ct);
+                if (source.Values.Sum() != sourceTotal)
+                    throw ErpException.Conflict("inconsistent_sales_cost", "Giá vốn từng dòng không khớp hóa đơn nguồn; hãy đối soát trước khi đảo.");
+                foreach (var line in lines) line.AttributeSalesCost(source[line.ProductId]);
+            }
+            else if (!credit)
+            {
+                foreach (var line in lines)
+                {
+                    var movement = movements.Single(x => x.ProductId == line.ProductId);
+                    line.AttributeSalesCost(Money.Round(Math.Abs(movement.QuantityDelta) * movement.UnitCost));
+                }
+            }
+            else
+            {
+                var products = lines.Select(l => l.ProductId).ToArray();
+                var remaining = await (
+                    from f in db.OrderFulfillments
+                    join l in db.Set<StockLine>() on f.StockDocumentId equals l.DocumentId
+                    join m in db.StockMovements on new { DocumentId = l.DocumentId, l.ProductId } equals new { m.DocumentId, m.ProductId }
+                    where f.OrderId == order.Id && m.WarehouseId == order.WarehouseId && products.Contains(l.ProductId)
+                    group new { m.QuantityDelta, f.IsReturn, l.PostedSalesCost } by l.ProductId into sku
+                    select new { ProductId = sku.Key, Quantity = sku.Sum(x => -x.QuantityDelta),
+                        Cost = sku.Sum(x => x.IsReturn ? -x.PostedSalesCost!.Value : x.PostedSalesCost!.Value) }
+                ).ToDictionaryAsync(x => x.ProductId, ct);
+                foreach (var line in lines)
+                {
+                    if (!remaining.TryGetValue(line.ProductId, out var sku) || sku.Quantity < line.Quantity || sku.Cost < 0)
+                        throw ErpException.Conflict("inconsistent_sales_cost", "Dữ liệu giá vốn nguồn không khớp; hãy đối soát đơn hàng.");
+                    // Partial returns share the recorded remaining SKU cost; its final return receives the exact residual cents.
+                    line.AttributeSalesCost(line.Quantity == sku.Quantity ? sku.Cost
+                        : Math.Min(sku.Cost, Money.Round(sku.Cost * line.Quantity / sku.Quantity)));
+                }
+            }
+            cost = lines.Sum(x => x.PostedSalesCost!.Value);
+        }
+        else if (reversesId is { } originalId)
             cost = await db.Set<FinanceInvoice>().Where(x => x.StockDocumentId == originalId).Select(x => x.CostAmount).SingleAsync(ct);
         else if (credit && order.Kind == OrderKind.Sales)
         {
@@ -249,19 +344,19 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
             cost = order.Lines.All(x => x.FulfilledQuantity == x.ReturnedQuantity)
                 ? Math.Max(0, outstandingCost) : Math.Min(cost, Math.Max(0, outstandingCost));
         }
-        await finance.AddInvoiceAsync(new FinanceSource(stockId,order.Id,Number(order.Kind,order.Id),order.PartnerId,
-            order.Kind == OrderKind.Purchase ? FinanceDirection.Payable : FinanceDirection.Receivable,credit,amount,cost,Now),ct);
+        await finance.AddInvoiceAsync(new FinanceSource(stockId, order.Id, Number(order.Kind, order.Id), order.PartnerId,
+            order.Kind == OrderKind.Purchase ? FinanceDirection.Payable : FinanceDirection.Receivable, credit, amount, cost, Now), ct);
     }
     private Task LockOrderAsync(int id, CancellationToken ct) =>
         db.Database.ExecuteSqlInterpolatedAsync($"SELECT Id FROM orders.Orders WITH (UPDLOCK,HOLDLOCK) WHERE Id={id}", ct);
 
-    private async Task<TradeOrder> LoadAsync(int id,CancellationToken ct) => await db.Orders.Include(x => x.Lines).Include(x => x.Partner).Include(x => x.Warehouse)
-        .SingleOrDefaultAsync(x => x.Id == id,ct) ?? throw ErpException.Missing("order_missing", "Không tìm thấy đơn.");
-    private async Task<StockBalance> BalanceAsync(Guid warehouse,Guid product,CancellationToken ct) =>
-        await db.StockBalances.SingleOrDefaultAsync(x => x.WarehouseId == warehouse && x.ProductId == product,ct)
+    private async Task<TradeOrder> LoadAsync(int id, CancellationToken ct) => await db.Orders.Include(x => x.Lines).Include(x => x.Partner).Include(x => x.Warehouse)
+        .SingleOrDefaultAsync(x => x.Id == id, ct) ?? throw ErpException.Missing("order_missing", "Không tìm thấy đơn.");
+    private async Task<StockBalance> BalanceAsync(Guid warehouse, Guid product, CancellationToken ct) =>
+        await db.StockBalances.SingleOrDefaultAsync(x => x.WarehouseId == warehouse && x.ProductId == product, ct)
         ?? throw ErpException.Conflict("insufficient_stock", "Sản phẩm chưa có tồn tại kho.");
     private DateTime Now => clock.GetUtcNow().UtcDateTime;
-    private void Audit(TradeOrder order,RequestActor actor,string action) => db.AuditEntries.Add(AuditEntry.Create(actor,Now,action,"Order",order.Id.ToString(),after:order.Status.ToString()));
-    private static OrderRow Row(TradeOrder x) => new(x.Id,Number(x.Kind,x.Id),x.Kind,x.Status,x.PartnerId,x.Partner.Name,x.WarehouseId,x.Warehouse.Name,
-        x.Lines.Sum(l => decimal.Round(l.Quantity*l.UnitPrice,2,MidpointRounding.AwayFromZero)),x.CreatedAtUtc,Convert.ToBase64String(x.Version));
+    private void Audit(TradeOrder order, RequestActor actor, string action) => db.AuditEntries.Add(AuditEntry.Create(actor, Now, action, "Order", order.Id.ToString(), after: order.Status.ToString()));
+    private static OrderRow Row(TradeOrder x) => new(x.Id, Number(x.Kind, x.Id), x.Kind, x.Status, x.PartnerId, x.Partner.Name, x.WarehouseId, x.Warehouse.Name,
+        x.Lines.Sum(l => decimal.Round(l.Quantity * l.UnitPrice, 2, MidpointRounding.AwayFromZero)), x.CreatedAtUtc, Convert.ToBase64String(x.Version));
 }

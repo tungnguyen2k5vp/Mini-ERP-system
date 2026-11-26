@@ -608,6 +608,10 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
                         .HasMaxLength(8)
                         .HasColumnType("varbinary(8)");
 
+                    b.Property<decimal?>("PostedSalesCost")
+                        .HasPrecision(19, 2)
+                        .HasColumnType("decimal(19,2)");
+
                     b.Property<string>("ProductName")
                         .IsRequired()
                         .HasMaxLength(160)
@@ -634,6 +638,8 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
                     b.ToTable("DocumentLines", "inventory", t =>
                         {
                             t.HasCheckConstraint("CK_StockLines_Cost", "[UnitCost] IS NULL OR [UnitCost] >= 0");
+
+                            t.HasCheckConstraint("CK_StockLines_PostedSalesCost", "[PostedSalesCost] IS NULL OR [PostedSalesCost] >= 0");
                         });
                 });
 

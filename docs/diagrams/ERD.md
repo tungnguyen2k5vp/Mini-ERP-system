@@ -2,6 +2,13 @@
 
 ~~~mermaid
 erDiagram
+    DOCUMENT_LINES {
+        int DocumentId PK,FK
+        uniqueidentifier ProductId PK,FK
+        decimal Quantity
+        decimal UnitCost
+        decimal PostedSalesCost "nullable attributed sales cost"
+    }
     USERS ||--o{ USER_ROLES : assigned
     ROLES ||--o{ USER_ROLES : grants
     ROLES ||--o{ ROLE_CLAIMS : contains

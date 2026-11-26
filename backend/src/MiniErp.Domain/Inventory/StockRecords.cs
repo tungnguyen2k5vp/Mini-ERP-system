@@ -129,7 +129,18 @@ public sealed class StockLine
     public string ProductName { get; init; } = "";
     public decimal Quantity { get; init; }
     public decimal? UnitCost { get; init; }
+    public decimal? PostedSalesCost { get; private set; }
     public byte[]? CountVersion { get; init; }
+
+    public void AttributeSalesCost(decimal amount)
+    {
+        CatalogRules.NonNegative(amount);
+        if (decimal.Round(amount, 2) != amount)
+            throw ErpException.Invalid("invalid_sales_cost", "Giá vốn ghi nhận cần tối đa 2 chữ số thập phân.");
+        if (PostedSalesCost is { } existing && existing != amount)
+            throw ErpException.Conflict("sales_cost_already_recorded", "Không thể sửa giá vốn đã ghi nhận.");
+        PostedSalesCost = amount;
+    }
 }
 
 public sealed class StockMovement

@@ -1,5 +1,11 @@
 # Business workflows
 
+## Tracing discrepancies
+
+Open **Báo cáo tồn kho → Đối soát hiện tại**, optionally choose a warehouse, then open a reported SKU to inspect that warehouse's movement history. Compare the ledger with on-hand, saved reservations and the remaining approved quantity. The inconsistent-line count also catches opposite errors that cancel in a position total.
+
+Open **Công nợ & thanh toán → Đối soát**, choose receivables or payables and the closing business date. The first table compares accounting totals. The exceptions list checks individual fulfillment, invoice and allocation sources. Open a permitted source document from a row to investigate. A historical correction still uses the normal return, reversal or settlement workflow.
+
 ## Access
 
 Sign in with a provisioned email and password. Administrators can create employees, assign roles and lock accounts. The API checks current permissions and records access changes. The personal profile shows current role grants and supports password changes.

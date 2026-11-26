@@ -20,9 +20,9 @@ const kindLabels: Record<number, string> = {
 }
 const statusLabels: Record<number, string> = { 1: 'Nháp', 2: 'Đã ghi sổ', 3: 'Đã hủy', 4: 'Đã đảo' }
 type Balance = { warehouseId: string; warehouseName: string; productId: string; sku: string; productName: string;
-  onHand: number; reserved: number; available: number; averageCost: number; minimumStock: number; isLowStock: boolean }
+  onHand: number; reserved: number; available: number; averageCost: number | null; minimumStock: number; isLowStock: boolean }
 type Movement = { id: number; documentId: number; documentNumber: string; warehouseId: string;
-  warehouseName: string; productId: string; sku: string; quantityDelta: number; unitCost: number;
+  warehouseName: string; productId: string; sku: string; quantityDelta: number; unitCost: number | null;
   balanceAfter: number; postedAt: string }
 export type StockDocument = { id: number; number: string; kind: number; status: number; warehouseId: string;
   warehouseName: string; destinationName: string | null; createdAt: string; postedAt: string | null; reversesId: number | null }
@@ -113,7 +113,7 @@ const movementColumns: ColumnDef<Movement>[] = [
 export function HistoryPage() {
   const [searchParams] = useSearchParams()
   const [page, setPage] = useState(1)
-  const [warehouse, setWarehouse] = useState('')
+  const [warehouse, setWarehouse] = useState(searchParams.get('warehouseId') ?? '')
   const params = warehouseQuery(warehouse, page)
   const productId = searchParams.get('productId')
   if (productId) params.set('productId', productId)

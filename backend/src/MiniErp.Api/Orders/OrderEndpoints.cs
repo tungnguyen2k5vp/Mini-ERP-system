@@ -10,7 +10,7 @@ internal static class OrderEndpoints
 {
     public static void MapOrders(this RouteGroupBuilder api)
     {
-        var orders = api.MapGroup("/orders").WithTags("Orders");
+        var orders = api.MapGroup("/orders").WithTags("Orders").AddEndpointFilter<FinancialFields>();
         orders.MapGet("/options",async (OrderKind kind,HttpContext http,IAuthorizationService auth,OrderService service,CancellationToken ct)=>
         {
             if (!Enum.IsDefined(kind)) throw ErpException.Invalid("invalid_order_kind","Loại đơn không hợp lệ.");
@@ -19,12 +19,15 @@ internal static class OrderEndpoints
                 return Results.Forbid();
             return Results.Ok(await service.OptionsAsync(kind,ct));
         });
-        orders.MapGet("/",async (OrderKind kind,Guid? partnerId,int? page,int? pageSize,string? search,OrderStatus? status,string? sort,bool? descending,HttpContext http,IAuthorizationService auth,OrderService service,CancellationToken ct) =>
+        orders.MapGet("/",async (OrderKind kind,Guid? partnerId,int? page,int? pageSize,string? search,OrderStatus? status,string? sort,bool? descending,HttpContext http,IAuthorizationService auth,IIdentityService identity,OrderService service,CancellationToken ct) =>
         {
             await RequireAsync(http,auth,kind,"View");
             var (number,size) = ApiPaging.Validate(page,pageSize,search);
             if (status.HasValue && !Enum.IsDefined(status.Value) || sort is not (null or "number" or "createdAtUtc" or "total" or "status"))
                 throw ErpException.Invalid("invalid_order_filter","Bộ lọc hoặc cột sắp xếp không hợp lệ.");
+            if (kind == OrderKind.Purchase && sort == "total" &&
+                !FinancialFields.PurchasePrices((await identity.GetProfileAsync(http.User.AccountId()!.Value,ct))?.Permissions ?? []))
+                return Results.Forbid();
             return Results.Ok(await service.ListAsync(kind,partnerId,number,size,ct,search,status,sort,descending??true));
         });
         orders.MapGet("/{id:int}",async (int id,HttpContext http,IAuthorizationService auth,OrderService service,CancellationToken ct) =>

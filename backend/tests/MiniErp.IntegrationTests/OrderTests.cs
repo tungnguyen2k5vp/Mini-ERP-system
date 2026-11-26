@@ -6,11 +6,198 @@ using MiniErp.Application.Inventory;
 using MiniErp.Application.Finance;
 using MiniErp.Application.Orders;
 using MiniErp.Domain.Orders;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using MiniErp.Application.Auth;
+using MiniErp.Domain;
+using MiniErp.Domain.Inventory;
+using MiniErp.Infrastructure.Orders;
+using MiniErp.Infrastructure.Persistence;
 namespace MiniErp.IntegrationTests;
 
 [Collection("SqlServer")]
 public sealed class OrderTests(ErpFixture fixture)
 {
+    [SqlServerFact]
+    public async Task Rounded_sku_snapshots_leave_other_sku_cost_outstanding_and_reverse_exact_source_cost()
+    {
+        using var client = await fixture.AuthenticatedClientAsync();
+        var a = await SetupAsync(client);
+        var b = await SetupAsync(client);
+        var purchase = await ApproveAsync(client, await CreateAsync(client,
+            new(Guid.NewGuid(), OrderKind.Purchase, a.Supplier, a.Warehouse, null,
+                [new(a.Product, 3, 0.005m), new(b.Product, 1, 1)])));
+        await FulfillAsync(client, purchase.Order.Id, new(Guid.NewGuid(), false, [new(a.Product, 3), new(b.Product, 1)]));
+        var sale = await ApproveAsync(client, await CreateAsync(client,
+            new(Guid.NewGuid(), OrderKind.Sales, a.Customer, a.Warehouse, null,
+                [new(a.Product, 3, 10), new(b.Product, 1, 10)])));
+        for (var i = 0; i < 3; i++)
+            sale = await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), false, [new(a.Product, 1)]));
+        sale = await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), false, [new(b.Product, 1)]));
+        var bShipment = sale.Fulfillments.MaxBy(x => x.Id)!;
+        for (var i = 0; i < 3; i++)
+            sale = await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), true, [new(a.Product, 1)]));
+        var finalA = sale.Fulfillments.Where(x => x.IsReturn).MaxBy(x => x.Id)!;
+        var invoices = (await client.GetFromJsonAsync<Page<InvoiceRow>>($"/api/v1/finance/invoices?partnerId={a.Customer}"))!.Items;
+        Assert.Equal(1m, invoices.Sum(x => x.IsCredit ? -x.CostAmount : x.CostAmount));
+        Assert.Equal(0.03m, invoices.Where(x => x.IsCredit).Sum(x => x.CostAmount));
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ErpDbContext>();
+            var aSources = await (from f in db.OrderFulfillments
+                                  join l in db.Set<StockLine>() on f.StockDocumentId equals l.DocumentId
+                                  where f.OrderId == sale.Order.Id && l.ProductId == a.Product
+                                  select l.PostedSalesCost).ToArrayAsync();
+            Assert.Equal(6, aSources.Length); Assert.All(aSources, value => Assert.Equal(0.01m, value));
+        }
+        using var reverseReturn = await client.PostAsync($"/api/v1/orders/{sale.Order.Id}/fulfillments/{finalA.Id}/reverse", null);
+        sale = await ReadAsync<OrderDetail>(reverseReturn);
+        var reversal = Assert.Single(sale.Fulfillments, x => x.ReversesId == finalA.Id);
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ErpDbContext>();
+            Assert.Equal(0.01m, await db.Set<StockLine>().Where(x => x.DocumentId == reversal.StockDocumentId).Select(x => x.PostedSalesCost).SingleAsync());
+            Assert.Equal(0.01m, await db.Set<StockLine>().Where(x => x.DocumentId == finalA.StockDocumentId).Select(x => x.PostedSalesCost).SingleAsync());
+        }
+        sale = await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), true, [new(a.Product, 1)]));
+        using var reverseB = await client.PostAsync($"/api/v1/orders/{sale.Order.Id}/fulfillments/{bShipment.Id}/reverse", null);
+        sale = await ReadAsync<OrderDetail>(reverseB);
+        invoices = (await client.GetFromJsonAsync<Page<InvoiceRow>>($"/api/v1/finance/invoices?partnerId={a.Customer}"))!.Items;
+        Assert.Equal(0, invoices.Sum(x => x.IsCredit ? -x.CostAmount : x.CostAmount));
+        var bReversal = Assert.Single(sale.Fulfillments, x => x.ReversesId == bShipment.Id);
+        Assert.Equal(1m, Assert.Single(invoices, x => x.StockDocumentId == bReversal.StockDocumentId).CostAmount);
+        Assert.Equal(1m, Assert.Single(invoices, x => x.StockDocumentId == bShipment.StockDocumentId).CostAmount);
+        Assert.Equal(3, (await BalanceAsync(client, a.Product)).OnHand);
+        Assert.Equal(1, (await BalanceAsync(client, b.Product)).OnHand);
+    }
+
+    [SqlServerFact]
+    public async Task Legacy_nullable_source_keeps_document_level_cost_and_new_activity_unattributed()
+    {
+        using var client = await fixture.AuthenticatedClientAsync();
+        var s = await SetupAsync(client);
+        var purchase = await ApproveAsync(client, await CreateAsync(client,
+            new(Guid.NewGuid(), OrderKind.Purchase, s.Supplier, s.Warehouse, null, [new(s.Product, 2, 10)])));
+        await FulfillAsync(client, purchase.Order.Id, new(Guid.NewGuid(), false, [new(s.Product, 2)]));
+        var sale = await ApproveAsync(client, await CreateAsync(client,
+            new(Guid.NewGuid(), OrderKind.Sales, s.Customer, s.Warehouse, null, [new(s.Product, 2, 20)])));
+        sale = await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), false, [new(s.Product, 2)]));
+        var original = Assert.Single(sale.Fulfillments);
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ErpDbContext>();
+            // Only this test-created source emulates the nullable shape of a pre-migration posting.
+            await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE inventory.DocumentLines SET PostedSalesCost=NULL WHERE DocumentId={original.StockDocumentId}");
+        }
+        sale = await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), true, [new(s.Product, 1)]));
+        sale = await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), true, [new(s.Product, 1)]));
+        var finalReturn = sale.Fulfillments.Where(x => x.IsReturn).MaxBy(x => x.Id)!;
+        using var reverse = await client.PostAsync($"/api/v1/orders/{sale.Order.Id}/fulfillments/{finalReturn.Id}/reverse", null);
+        await ReadAsync<OrderDetail>(reverse);
+        await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), true, [new(s.Product, 1)]));
+        var invoices = (await client.GetFromJsonAsync<Page<InvoiceRow>>($"/api/v1/finance/invoices?partnerId={s.Customer}"))!.Items;
+        Assert.Equal(20m, Assert.Single(invoices, x => x.StockDocumentId == original.StockDocumentId).CostAmount);
+        Assert.Equal(0, invoices.Sum(x => x.IsCredit ? -x.CostAmount : x.CostAmount));
+        await using var readScope = fixture.Services.CreateAsyncScope();
+        var readDb = readScope.ServiceProvider.GetRequiredService<ErpDbContext>();
+        var costs = await (from f in readDb.OrderFulfillments
+                           join l in readDb.Set<StockLine>() on f.StockDocumentId equals l.DocumentId
+                           where f.OrderId == sale.Order.Id
+                           select l.PostedSalesCost).ToArrayAsync();
+        Assert.Equal(5, costs.Length); Assert.All(costs, value => Assert.Null(value));
+    }
+    [SqlServerFact]
+    public async Task Multi_sku_non_last_reversal_preserves_source_cents_and_returns_reconcile_order_totals()
+    {
+        using var client = await fixture.AuthenticatedClientAsync();
+        var s = await SetupAsync(client);
+        var other = await SetupAsync(client);
+        var purchase = await ApproveAsync(client, await CreateAsync(client,
+            new(Guid.NewGuid(), OrderKind.Purchase, s.Supplier, s.Warehouse, null,
+                [new(s.Product, 1, 0.005m), new(other.Product, 1, 0.005m)])));
+        await FulfillAsync(client, purchase.Order.Id, new(Guid.NewGuid(), false, [new(s.Product, 1), new(other.Product, 1)]));
+        var sale = await ApproveAsync(client, await CreateAsync(client,
+            new(Guid.NewGuid(), OrderKind.Sales, s.Customer, s.Warehouse, null,
+                [new(s.Product, 1, 0.005m), new(other.Product, 1, 0.005m)])));
+        sale = await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), false, [new(s.Product, 1)]));
+        var first = Assert.Single(sale.Fulfillments);
+        await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), false, [new(other.Product, 1)]));
+        using var reversal = await client.PostAsync($"/api/v1/orders/{sale.Order.Id}/fulfillments/{first.Id}/reverse", null);
+        sale = await ReadAsync<OrderDetail>(reversal);
+        var invoices = (await client.GetFromJsonAsync<Page<InvoiceRow>>($"/api/v1/finance/invoices?partnerId={s.Customer}"))!.Items;
+        var originalInvoice = Assert.Single(invoices, x => x.StockDocumentId == first.StockDocumentId);
+        var reversingSource = Assert.Single(sale.Fulfillments, x => x.ReversesId == first.Id);
+        var credit = Assert.Single(invoices, x => x.StockDocumentId == reversingSource.StockDocumentId);
+        Assert.Equal(originalInvoice.Amount, credit.Amount);
+        Assert.Equal(originalInvoice.CostAmount, credit.CostAmount);
+        Assert.Equal(0.01m, invoices.Sum(x => x.IsCredit ? -x.Amount : x.Amount));
+        await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), false, [new(s.Product, 1)]));
+        await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), true, [new(s.Product, 0.5m)]));
+        await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), true, [new(s.Product, 0.5m)]));
+        await FulfillAsync(client, sale.Order.Id, new(Guid.NewGuid(), true, [new(other.Product, 1)]));
+        invoices = (await client.GetFromJsonAsync<Page<InvoiceRow>>($"/api/v1/finance/invoices?partnerId={s.Customer}"))!.Items;
+        Assert.Equal(0, invoices.Sum(x => x.IsCredit ? -x.Amount : x.Amount));
+        Assert.Equal(0, invoices.Sum(x => x.IsCredit ? -x.CostAmount : x.CostAmount));
+        Assert.Equal(1, (await BalanceAsync(client, s.Product)).OnHand);
+        Assert.Equal(1, (await BalanceAsync(client, other.Product)).OnHand);
+    }
+    [SqlServerFact]
+    public async Task Create_replay_checks_payload_and_cancel_replay_has_no_new_audit_or_version()
+    {
+        using var client = await fixture.AuthenticatedClientAsync();
+        var s = await SetupAsync(client);
+        var input = new OrderInput(Guid.NewGuid(), OrderKind.Purchase, s.Supplier, s.Warehouse, "Replay", [new(s.Product, 2, 10)]);
+        var order = await CreateAsync(client, input);
+        Assert.Equal(order.Order.Id, (await CreateAsync(client, input)).Order.Id);
+        using var changed = await client.PostAsJsonAsync("/api/v1/orders", input with { Lines = [new(s.Product, 2, 11)] });
+        Assert.Equal(HttpStatusCode.Conflict, changed.StatusCode);
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<OrderService>();
+            var error = await Assert.ThrowsAsync<ErpException>(() => service.TransitionAsync(order.Order.Id, "complete",
+                new(order.Order.Version), new(null, "transition-regression"), CancellationToken.None));
+            Assert.Equal("invalid_order_transition", error.Code);
+        }
+        var cancelled = await TransitionAsync(client, order, "cancel");
+        var repeated = await TransitionAsync(client, order, "cancel");
+        Assert.Equal(cancelled.Order.Version, repeated.Order.Version);
+        Assert.Equal(OrderStatus.Cancelled, repeated.Order.Status);
+        await using var readScope = fixture.Services.CreateAsyncScope();
+        var db = readScope.ServiceProvider.GetRequiredService<ErpDbContext>();
+        var id = order.Order.Id.ToString();
+        Assert.Equal(1, await db.AuditEntries.CountAsync(x => x.Entity == "Order" && x.EntityId == id && x.Action == "CreateOrder"));
+        Assert.Equal(1, await db.AuditEntries.CountAsync(x => x.Entity == "Order" && x.EntityId == id && x.Action == "cancelOrder"));
+        Assert.False(await db.OrderFulfillments.AnyAsync(x => x.OrderId == order.Order.Id));
+    }
+    [SqlServerFact]
+    public async Task Linked_shipment_reversal_uses_order_entry_point_and_retry_preserves_source_totals()
+    {
+        using var client = await fixture.AuthenticatedClientAsync();
+        var s = await SetupAsync(client);
+        var purchase = await ApproveAsync(client, await CreateAsync(client,
+            new(Guid.NewGuid(), OrderKind.Purchase, s.Supplier, s.Warehouse, null, [new(s.Product, 2, 10)])));
+        await FulfillAsync(client, purchase.Order.Id, new(Guid.NewGuid(), false, [new(s.Product, 2)]));
+        var sale = await ApproveAsync(client, await CreateAsync(client,
+            new(Guid.NewGuid(), OrderKind.Sales, s.Customer, s.Warehouse, null, [new(s.Product, 1, 20)])));
+        var input = new FulfillmentInput(Guid.NewGuid(), false, [new(s.Product, 1)]);
+        sale = await FulfillAsync(client, sale.Order.Id, input);
+        var shipment = Assert.Single(sale.Fulfillments);
+        using var direct = await client.PostAsync($"/api/v1/inventory/documents/{shipment.StockDocumentId}/reverse", null);
+        Assert.Equal(HttpStatusCode.Conflict, direct.StatusCode);
+        using var changed = await client.PostAsJsonAsync($"/api/v1/orders/{sale.Order.Id}/fulfill", input with { IsReturn = true });
+        Assert.Equal(HttpStatusCode.Conflict, changed.StatusCode);
+        using var reverse = await client.PostAsync($"/api/v1/orders/{sale.Order.Id}/fulfillments/{shipment.Id}/reverse", null);
+        var reversed = await ReadAsync<OrderDetail>(reverse);
+        using var retry = await client.PostAsync($"/api/v1/orders/{sale.Order.Id}/fulfillments/{shipment.Id}/reverse", null);
+        Assert.Equal(reversed.Order.Version, (await ReadAsync<OrderDetail>(retry)).Order.Version);
+        Assert.Equal(0, reversed.Lines[0].FulfilledQuantity);
+        var balance = await BalanceAsync(client, s.Product);
+        Assert.Equal(2, balance.OnHand); Assert.Equal(1, balance.Reserved);
+        var invoices = (await client.GetFromJsonAsync<Page<InvoiceRow>>($"/api/v1/finance/invoices?partnerId={s.Customer}"))!.Items;
+        Assert.Equal(2, invoices.Count);
+        Assert.Equal(0, invoices.Sum(x => x.IsCredit ? -x.Amount : x.Amount));
+        Assert.Equal(0, invoices.Sum(x => x.IsCredit ? -x.CostAmount : x.CostAmount));
+    }
     [SqlServerFact]
     public async Task Sales_returns_use_only_outstanding_shipment_cost_and_reconcile_invoice_cents()
     {
@@ -44,7 +231,7 @@ public sealed class OrderTests(ErpFixture fixture)
             fractional = await FulfillAsync(client, fractional.Order.Id, new(Guid.NewGuid(), true, [new(s.Product, quantity)]));
         var finalFraction = fractional.Fulfillments.Where(x => x.IsReturn).MaxBy(x => x.Id)!;
         invoices = (await client.GetFromJsonAsync<Page<InvoiceRow>>($"/api/v1/finance/invoices?partnerId={s.Customer}"))!.Items;
-        Assert.Equal(6.66m, Assert.Single(invoices, x => x.StockDocumentId == finalFraction.StockDocumentId).CostAmount);
+        Assert.Equal(6.67m, Assert.Single(invoices, x => x.StockDocumentId == finalFraction.StockDocumentId).CostAmount);
         Assert.Equal(0, invoices.Sum(x => x.IsCredit ? -x.CostAmount : x.CostAmount));
         using var reversed = await client.PostAsync($"/api/v1/orders/{fractional.Order.Id}/fulfillments/{finalFraction.Id}/reverse", null);
         await ReadAsync<OrderDetail>(reversed);

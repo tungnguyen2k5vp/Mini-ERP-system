@@ -45,12 +45,17 @@ internal static class InventoryModel
         });
         model.Entity<StockLine>(line =>
         {
-            line.ToTable("DocumentLines", "inventory", t => t.HasCheckConstraint("CK_StockLines_Cost", "[UnitCost] IS NULL OR [UnitCost] >= 0"));
+            line.ToTable("DocumentLines", "inventory", t =>
+            {
+                t.HasCheckConstraint("CK_StockLines_Cost", "[UnitCost] IS NULL OR [UnitCost] >= 0");
+                t.HasCheckConstraint("CK_StockLines_PostedSalesCost", "[PostedSalesCost] IS NULL OR [PostedSalesCost] >= 0");
+            });
             line.HasKey(x => new { x.DocumentId, x.ProductId });
             line.Property(x => x.Sku).HasMaxLength(32).IsUnicode(false);
             line.Property(x => x.ProductName).HasMaxLength(160);
             line.Property(x => x.CountVersion).HasMaxLength(8);
             Precision(line, nameof(StockLine.Quantity), nameof(StockLine.UnitCost));
+            line.Property(x => x.PostedSalesCost).HasPrecision(19, 2);
             line.HasOne<StockDocument>().WithMany(x => x.Lines).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Restrict);
             line.HasOne<Product>().WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
         });

@@ -1,5 +1,15 @@
 # Demo guide
 
+## V2 walkthrough · 12 minutes
+
+| Time | Live task | What to check |
+| --- | --- | --- |
+| 0–2 min | Open the Manager dashboard, select a Vietnam business period, then follow the stock or aging metric. | The drill-down keeps the selected dates. Stock counts distinct SKUs and the daily chart counts receipt and issue documents. |
+| 2–5 min | Create a small purchase and sales order using the existing steps below. Ship partially, then inspect stock reconciliation for the selected warehouse. | A healthy location has no exceptions. The shipment reduced both available reservation and physical stock by the quantities appropriate to each record. |
+| 5–8 min | Return part of a newly shipped sales line and inspect the linked invoice and stock document. | The goods return has a separate credit. Refunding cash requires prior payment. The final return for a SKU clears its remaining recorded cost. |
+| 8–10 min | Compare aging and source exceptions for the same closing date. | Follow the source IDs of any actual exception. On healthy demo data the exception list is empty. The rollback-only regression demonstrates data discrepancies on isolated test records. |
+| 10–12 min | Open an existing purchase order as Warehouse Staff and inspect its quantities and print layout. | Historical purchase prices stay restricted. The Manager session can inspect amounts using the same order ID. |
+
 Run the local setup, migrations, seed and start scripts from the [README](../README.md). Sign in as the seeded administrator and use the local password in .work/dev.env.json. The seed records are fictitious. Inventory opening balances are posted by the same stock service used by the API.
 
 ## Review a transfer
