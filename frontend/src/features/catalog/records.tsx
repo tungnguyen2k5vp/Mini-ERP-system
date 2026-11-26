@@ -80,6 +80,10 @@ export function RecordDetail({ profile, resource }: { profile: Profile; resource
       <dl className="key-values">{fields.map(([label, value]) =>
         <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
       )}</dl>
+      {isPartner(resource) && <div className="action-row section-gap">
+        {profile.permissions.includes(resource === 'customers' ? 'Sales.View' : 'Purchasing.View') && <Button variant="outline" asChild><Link to={(resource === 'customers' ? '/ban-hang' : '/mua-hang') + '?partnerId=' + row.id}>Lịch sử đơn hàng</Link></Button>}
+        {profile.permissions.includes('Finance.View') && <Button variant="outline" asChild><Link to={'/tai-chinh?direction=' + (resource === 'customers' ? '1' : '2') + '&partnerId=' + row.id}>Công nợ & giao dịch</Link></Button>}
+      </div>}
     </section>
   </>
 }

@@ -17,6 +17,8 @@ test('real authentication, refresh after reload, and logout', async ({ page }) =
   await expect(page.getByRole('alert')).toContainText('Kiểm tra thông tin đăng nhập')
 
   await login(page)
+  await page.goto('/tai-khoan')
+  await expect(page.getByRole('heading', { name: 'Tài khoản của tôi' })).toBeVisible()
   const refresh = page.waitForResponse(response => response.url().endsWith('/auth/refresh'))
   await page.reload()
   expect((await refresh).status()).toBe(200)
@@ -57,6 +59,7 @@ test('mobile sign-in, keyboard navigation, and no page overflow', async ({ page 
   expect(audit.violations.map(finding => finding.id)).toEqual([])
   await page.screenshot({ path: join('..', 'docs', 'screenshots', 'login-mobile.png') })
   await login(page)
+  await page.goto('/tai-khoan')
   const toggle = page.getByRole('button', { name: 'Mở điều hướng' })
   await toggle.click()
   await expect(page.getByRole('dialog')).toBeVisible()
