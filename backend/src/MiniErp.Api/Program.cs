@@ -16,6 +16,13 @@ using MiniErp.Infrastructure.Auth;
 using MiniErp.Infrastructure.Catalog;
 using MiniErp.Infrastructure.Inventory;
 using MiniErp.Infrastructure.Persistence;
+using MiniErp.Api.Orders;
+using MiniErp.Api.Finance;
+using MiniErp.Api.Reporting;
+using MiniErp.Application.Finance;
+using MiniErp.Infrastructure.Orders;
+using MiniErp.Infrastructure.Finance;
+using MiniErp.Infrastructure.Reporting;
 
 var commands = new[] { "--migrate", "--seed", "--provision-admin" };
 var builder = WebApplication.CreateBuilder(args.Where(arg => !commands.Contains(arg)).ToArray());
@@ -43,6 +50,13 @@ builder.Services.AddScoped<CatalogSeed>();
 builder.Services.AddScoped<StockService>();
 builder.Services.AddScoped<InventoryReport>();
 builder.Services.AddScoped<StockDemoSeed>();
+builder.Services.AddScoped<OrderService>();
+builder.Services.AddScoped<OrderDemoSeed>();
+builder.Services.AddScoped<FinanceService>();
+builder.Services.AddScoped<IFinancePosting>(sp => sp.GetRequiredService<FinanceService>());
+builder.Services.AddScoped<FinanceReport>();
+builder.Services.AddScoped<OperationsReport>();
+builder.Services.AddScoped<ProductWorkbook>();
 builder.Services.AddSingleton<AccessTokenIssuer>();
 builder.Services.AddOptions<AuthSettings>().BindConfiguration("Auth")
     .Validate(AuthSettings.HasValidKey, "Auth__SigningKey must be a Base64 key of at least 32 bytes.")
@@ -98,6 +112,8 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
     context.ProblemDetails.Extensions["correlationId"] = context.HttpContext.TraceIdentifier);
 builder.Services.AddExceptionHandler<ApiErrors>();
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.Converters.Add(new UtcDateTimeConverter()));
 builder.Services.AddValidation();
 builder.Services.AddOpenApi("v1");
 builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("sql-server", tags: ["ready"]);
@@ -130,6 +146,7 @@ if (args.Any(commands.Contains))
         {
             await scope.ServiceProvider.GetRequiredService<CatalogSeed>().SeedAsync(CancellationToken.None);
             await scope.ServiceProvider.GetRequiredService<StockDemoSeed>().SeedAsync(CancellationToken.None);
+            await scope.ServiceProvider.GetRequiredService<OrderDemoSeed>().SeedAsync(CancellationToken.None);
         }
     }
     return;
@@ -139,9 +156,26 @@ app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.Use(async (http, next) =>
 {
-    http.Response.Headers["X-Correlation-ID"] = http.TraceIdentifier;
-    http.Response.Headers.XContentTypeOptions = "nosniff";
-    http.Response.Headers["Referrer-Policy"] = "same-origin";
+    http.Response.OnStarting(() =>
+    {
+        http.Response.Headers["X-Correlation-ID"] = http.TraceIdentifier;
+        http.Response.Headers.XContentTypeOptions = "nosniff";
+        http.Response.Headers["Referrer-Policy"] = "same-origin";
+        if (http.Request.Path.StartsWithSegments("/api")) http.Response.Headers.CacheControl = "no-store";
+        return Task.CompletedTask;
+    });
+    var route = (http.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText;
+    if (route?.StartsWith("/api/", StringComparison.Ordinal) == true)
+    {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        http.Response.OnCompleted(() =>
+        {
+            app.Logger.LogInformation("{Method} {Route} returned {Status} in {ElapsedMs:F1} ms ({CorrelationId})",
+                http.Request.Method, route, http.Response.StatusCode,
+                System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, http.TraceIdentifier);
+            return Task.CompletedTask;
+        });
+    }
     await next(http);
 });
 app.UseRateLimiter();
@@ -158,6 +192,9 @@ var api = app.MapGroup("/api/v1").RequireAuthorization();
 api.MapIdentityEndpoints();
 api.MapCatalog();
 api.MapInventory();
+api.MapOrders();
+api.MapFinance();
+api.MapOperationsReports();
 
 await app.RunAsync();
 

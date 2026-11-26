@@ -78,9 +78,9 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
         return await DetailAsync(doc.Id, ct);
     }
 
-    public async Task<StockDocumentResponse> PostAsync(int id, RequestActor actor, CancellationToken ct)
+    public async Task<StockDocumentResponse> PostAsync(int id, RequestActor actor, CancellationToken ct, bool linked = false)
     {
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await using var transaction = linked ? null : await db.Database.BeginTransactionAsync(ct);
         var doc = await LoadAsync(id, ct);
         if (doc.Status == StockStatus.Posted)
         {
@@ -116,7 +116,7 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
 
         Audit(doc, actor, "PostStockDocument");
         await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
+        if (transaction is not null) await transaction.CommitAsync(ct);
         return await DetailAsync(id, ct);
     }
 
@@ -130,9 +130,11 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
         return await DetailAsync(id, ct);
     }
 
-    public async Task<StockDocumentResponse> ReverseAsync(int id, RequestActor actor, CancellationToken ct)
+    public async Task<StockDocumentResponse> ReverseAsync(int id, RequestActor actor, CancellationToken ct, bool linked = false)
     {
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        if (!linked && await db.OrderFulfillments.AnyAsync(x => x.StockDocumentId == id, ct))
+            throw ErpException.Conflict("linked_document", "Đảo phiếu từ đơn hàng nguồn để đối soát công nợ.");
+        await using var transaction = linked ? null : await db.Database.BeginTransactionAsync(ct);
         var original = await LoadAsync(id, ct);
         if (original.Status == StockStatus.Reversed)
         {
@@ -177,7 +179,7 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
         }
         Audit(original, actor, "ReverseStockDocument");
         await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
+        if (transaction is not null) await transaction.CommitAsync(ct);
         return await DetailAsync(reversal.Id, ct);
     }
 
@@ -199,7 +201,7 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
 
     public Task<StockProductOption[]> ProductOptionsAsync(CancellationToken ct) =>
         db.Products.Where(x => x.IsActive).OrderBy(x => x.Sku)
-            .Select(x => new StockProductOption(x.Id, x.Sku, x.Name, x.PurchasePrice)).ToArrayAsync(ct);
+            .Select(x => new StockProductOption(x.Id, x.Sku, x.Name, x.PurchasePrice, x.SalePrice)).ToArrayAsync(ct);
 
     private async Task<StockDocument> LoadAsync(int id, CancellationToken ct) =>
         await db.StockDocuments.Include(x => x.Lines).SingleOrDefaultAsync(x => x.Id == id, ct)

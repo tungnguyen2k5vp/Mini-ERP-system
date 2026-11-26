@@ -28,6 +28,7 @@ public sealed class SqlServerFactAttribute : FactAttribute
 
 public sealed class ErpFixture : WebApplicationFactory<Program>, IAsyncLifetime
 {
+    private int _clientAddress;
     public static string Origin => Environment.GetEnvironmentVariable("Auth__PublicOrigin") ?? "http://localhost:5186";
     public string AdminEmail => Environment.GetEnvironmentVariable("Seed__AdminEmail")!;
     public string AdminPassword => Environment.GetEnvironmentVariable("Seed__AdminPassword")!;
@@ -58,8 +59,12 @@ public sealed class ErpFixture : WebApplicationFactory<Program>, IAsyncLifetime
 
     Task IAsyncLifetime.DisposeAsync() => DisposeAsync().AsTask();
 
-    public HttpClient NewClient() =>
-        CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri(Origin), HandleCookies = false });
+    public HttpClient NewClient()
+    {
+        // TestServer has no socket peer. Give each simulated browser its own loopback address for rate limiting.
+        var address = new System.Net.IPAddress(new byte[] { 127, 0, 0, checked((byte)Interlocked.Increment(ref _clientAddress)) });
+        return new HttpClient(Server.CreateHandler(context => context.Connection.RemoteIpAddress = address)) { BaseAddress = new Uri(Origin) };
+    }
 
     public async Task<HttpClient> AuthenticatedClientAsync(string? email = null, string? password = null)
     {

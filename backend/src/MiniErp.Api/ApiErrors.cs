@@ -21,7 +21,7 @@ internal sealed class ApiErrors(ILogger<ApiErrors> logger) : IExceptionHandler
                 "Dữ liệu đã thay đổi. Tải lại trước khi thử lại."),
             DbUpdateException { InnerException: SqlException { Number: 2601 or 2627 } } =>
                 (409, "duplicate_record", "Dữ liệu đã tồn tại.", "Kiểm tra mã hoặc chứng từ liên quan."),
-            SqlException { Number: 1205 or -2 } or DbUpdateException { InnerException: SqlException { Number: 1205 or -2 } } =>
+            _ when IsSqlConflict(error) =>
                 (409, "transaction_conflict", "Xung đột giao dịch.", "Tải lại dữ liệu và thử lại."),
             BadHttpRequestException bad => (bad.StatusCode, "invalid_request", "Yêu cầu không hợp lệ.",
                 "Kiểm tra dữ liệu gửi lên."),
@@ -38,5 +38,15 @@ internal sealed class ApiErrors(ILogger<ApiErrors> logger) : IExceptionHandler
         await Results.Problem(statusCode: status, title: title, detail: message,
             extensions: new Dictionary<string, object?> { ["code"] = code }).ExecuteAsync(http);
         return true;
+    }
+
+    private static bool IsSqlConflict(Exception? error)
+    {
+        while (error is not null)
+        {
+            if (error is SqlException { Number: 1205 or -2 }) return true;
+            error = error.InnerException;
+        }
+        return false;
     }
 }

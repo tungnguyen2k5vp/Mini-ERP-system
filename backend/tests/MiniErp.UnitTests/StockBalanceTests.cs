@@ -6,6 +6,22 @@ namespace MiniErp.UnitTests;
 public sealed class StockBalanceTests
 {
     [Fact]
+    public void Reservations_protect_available_stock_until_explicit_release()
+    {
+        var balance = new StockBalance();
+        balance.Receive(10, 25);
+        balance.Reserve(8);
+        Assert.Equal(2, balance.Available);
+        Assert.Throws<ErpException>(() => balance.Reserve(3));
+        Assert.Throws<ErpException>(() => balance.Issue(3));
+        Assert.Throws<ErpException>(() => balance.Reverse(3, 25));
+        balance.Release(3);
+        balance.Issue(3);
+        Assert.Equal(7, balance.OnHand);
+        Assert.Equal(5, balance.Reserved);
+        Assert.Throws<ErpException>(() => balance.Release(6));
+    }
+    [Fact]
     public void Weighted_average_applies_to_issues_and_last_movement_reversal()
     {
         var balance = new StockBalance();

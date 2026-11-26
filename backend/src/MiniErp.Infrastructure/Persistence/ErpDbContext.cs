@@ -7,6 +7,9 @@ using MiniErp.Domain.Inventory;
 using MiniErp.Infrastructure.Auth;
 using MiniErp.Infrastructure.Catalog;
 using MiniErp.Infrastructure.Inventory;
+using MiniErp.Domain.Orders;
+using MiniErp.Infrastructure.Orders;
+using MiniErp.Infrastructure.Finance;
 
 namespace MiniErp.Infrastructure.Persistence;
 
@@ -21,12 +24,17 @@ public sealed class ErpDbContext(DbContextOptions<ErpDbContext> options)
     public DbSet<StockBalance> StockBalances => Set<StockBalance>();
     public DbSet<StockDocument> StockDocuments => Set<StockDocument>();
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
+    public DbSet<TradeOrder> Orders => Set<TradeOrder>();
+    public DbSet<OrderLine> OrderLines => Set<OrderLine>();
+    public DbSet<OrderFulfillment> OrderFulfillments => Set<OrderFulfillment>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
         base.OnModelCreating(model);
         CatalogModel.Configure(model);
         InventoryModel.Configure(model);
+        OrderModel.Configure(model);
+        FinanceModel.Configure(model);
         model.Entity<ErpUser>(user =>
         {
             user.ToTable("Users", "auth");
