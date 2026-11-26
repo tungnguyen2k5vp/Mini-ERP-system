@@ -12,6 +12,7 @@ import { api, json, type Profile } from '../../lib/api'
 import { formatMoney, formatQuantity } from '../../lib/labels'
 import { queryClient } from '../../lib/query'
 import { ActiveBadge, Listing, useLookupOptions, type CatalogRecord } from './listing'
+import { ProductWorkbook } from './workbook'
 
 const path = '/san-pham'
 const prices = [
@@ -54,7 +55,8 @@ const columns: ColumnDef<Product>[] = [
 export function ProductsPage({ profile }: { profile: Profile }) {
   const categories = useLookupOptions('categories')
   return <Listing profile={profile} resource="products" path={path} title="Sản phẩm"
-    description="Quản lý SKU, giá và quy cách hàng hóa." create="Thêm sản phẩm" columns={columns} categories={categories.data} />
+    description="Quản lý SKU, giá và quy cách hàng hóa." create="Thêm sản phẩm" columns={columns} categories={categories.data}
+    tools={<ProductWorkbook profile={profile} />} />
 }
 
 function useProduct(id?: string) {

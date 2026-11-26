@@ -1,8 +1,8 @@
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { ArrowLeft, ArrowRight, Plus, Search } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Plus, Search, Printer } from 'lucide-react'
 import { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { DataTable } from '../../components/data-table'
 import { ErrorNotice, Loading } from '../../components/feedback'
 import { Button } from '../../components/ui/button'
@@ -111,9 +111,12 @@ const movementColumns: ColumnDef<Movement>[] = [
 ]
 
 export function HistoryPage() {
+  const [searchParams] = useSearchParams()
   const [page, setPage] = useState(1)
   const [warehouse, setWarehouse] = useState('')
   const params = warehouseQuery(warehouse, page)
+  const productId = searchParams.get('productId')
+  if (productId) params.set('productId', productId)
   const query = useQuery({
     queryKey: ['inventory', 'history', params.toString()],
     queryFn: ({ signal }) => api<Page<Movement>>(root + '/history?' + params, { signal }),
@@ -123,7 +126,7 @@ export function HistoryPage() {
     <header className="page-heading">
       <div><h1>Biến động kho</h1><p className="page-description">Tra cứu biến động và giá vốn theo chứng từ đã ghi sổ.</p></div>
     </header>
-    <div className="table-toolbar"><WarehouseFilter value={warehouse} onChange={value => { setWarehouse(value); setPage(1) }} /></div>
+    <div className="table-toolbar"><WarehouseFilter value={warehouse} onChange={value => { setWarehouse(value); setPage(1) }} />{productId && <Link className="record-link" to="/ton-kho/lich-su">Bỏ lọc sản phẩm</Link>}</div>
     <ErrorNotice error={query.error} />
     {query.isPending ? <Loading /> : query.data &&
       <DataTable page={query.data} columns={movementColumns} label="Lịch sử biến động kho" onPage={setPage} />}
@@ -216,12 +219,12 @@ export function StockDocumentPage({ profile }: { profile: Profile }) {
     <Link className="back-link" to={docPath}><ArrowLeft size={16} aria-hidden /> Chứng từ kho</Link>
     <header className="page-heading">
       <div><h1>{document.number}</h1><div className="flex items-center gap-2 mt-2">{kindLabels[document.kind]} {statusBadge(document.status)}</div></div>
-      {profile.permissions.includes('Inventory.Post') && <div className="form-actions">
+      <div className="action-row"><Button variant="outline" onClick={() => window.print()}><Printer size={16} /> In chứng từ</Button>{profile.permissions.includes('Inventory.Post') && <div className="form-actions">
         {available.map(action => <Button
           key={action} variant={action === 'post' ? 'primary' : 'outline'} disabled={mutation.isPending} onClick={() => {
             if (window.confirm(actions[action].prompt)) mutation.mutate(action)
           }}>{actions[action].label}</Button>)}
-      </div>}
+      </div>}</div>
     </header>
     <ErrorNotice error={mutation.error} />
     <section className="panel record-panel document-summary">

@@ -38,6 +38,20 @@ public sealed class StockBalance
         return cost;
     }
 
+    public void Reserve(decimal quantity)
+    {
+        RequirePositive(quantity);
+        if (quantity > Available) throw ErpException.Conflict("insufficient_stock", "Tồn khả dụng không đủ để giữ hàng.");
+        Reserved += quantity;
+    }
+
+    public void Release(decimal quantity)
+    {
+        RequirePositive(quantity);
+        if (quantity > Reserved) throw ErpException.Conflict("invalid_reservation", "Số lượng giữ hàng không hợp lệ.");
+        Reserved -= quantity;
+    }
+
     public void Reverse(decimal originalDelta, decimal previousAverageCost)
     {
         var restored = OnHand - originalDelta;

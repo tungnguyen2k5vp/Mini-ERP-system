@@ -17,6 +17,16 @@ erDiagram
     PRODUCTS ||--o{ MOVEMENTS : moved_item
     LOOKUPS ||--o{ MOVEMENTS : moved_at
     DOCUMENTS |o--o| DOCUMENTS : reverses
+    BUSINESS_PARTNERS ||--o{ ORDERS : trades
+    ORDERS ||--|{ ORDER_LINES : contains
+    PRODUCTS ||--o{ ORDER_LINES : snapshots
+    ORDERS ||--o{ FULFILLMENTS : permits
+    DOCUMENTS ||--o| FULFILLMENTS : posts
+    DOCUMENTS ||--o| INVOICES : generates
+    ORDERS ||--o{ INVOICES : originates
+    INVOICES ||--o{ ALLOCATIONS : settles
+    PAYMENTS ||--|{ ALLOCATIONS : distributes
+    BUSINESS_PARTNERS ||--o{ PAYMENTS : pays_or_receives
 ~~~
 
 Audit attribution retains the user identifier in the historical record. SQL Server does not enforce a cascading dependency from audit entries.

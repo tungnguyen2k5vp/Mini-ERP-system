@@ -104,9 +104,13 @@ public sealed class IdentityService(ErpDbContext db, UserManager<ErpUser> users,
 
     public Task<UserProfile?> GetProfileAsync(Guid id, CancellationToken ct) => profiles.GetAsync(id, ct);
 
-    public Task<bool> IsSessionActiveAsync(Guid userId, Guid sessionId, CancellationToken ct) =>
-        ActiveSessions(clock.GetUtcNow().UtcDateTime).AsNoTracking()
-            .AnyAsync(x => x.Id == sessionId && x.UserId == userId, ct);
+    public Task<bool> IsSessionActiveAsync(Guid userId, Guid sessionId, CancellationToken ct)
+    {
+        // A pooled SQL session can briefly return 3980 after another browser request was cancelled.
+        var retry = new SqlServerRetryingExecutionStrategy(db, 2, TimeSpan.FromMilliseconds(250), [3980]);
+        return retry.ExecuteAsync(token => ActiveSessions(clock.GetUtcNow().UtcDateTime).AsNoTracking()
+            .AnyAsync(x => x.Id == sessionId && x.UserId == userId, token), ct);
+    }
 
     public async Task ChangePasswordAsync(Guid id, ChangePasswordRequest request, RequestActor actor, CancellationToken ct)
     {

@@ -1,0 +1,15 @@
+.git
+.work
+.env
+.env.*
+**/bin
+**/obj
+**/node_modules
+frontend/dist
+**/test-results
+**/playwright-report
+**/TestResults
+docs/screenshots
+artifacts
+*.trx
+*.binlog

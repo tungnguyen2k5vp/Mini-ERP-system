@@ -1,5 +1,14 @@
 # Code review checkpoint
 
+## Upgrade review
+
+- A clean online npm install exposed missing entries that an offline dry run hid. Regenerating from pinned dependencies and verifying real installation closed this gap.
+- A competing payment generated SQL deadlock 1205 wrapped by EF as InvalidOperationException. Map nested SQL transaction conflicts to 409. Serialize related payments, order transitions and returns with the same ordered SQL locks.
+- Unpaid merchandise returns could previously leave both an overpayable debit and a refundable credit. Same-order offsets now reduce the actionable amount and refunds are capped by actual historical cash.
+- A sale, return and later shipment at a new cost exposed an incorrect average across already returned units. Use net outstanding signed movements and settle the final document-level cost cents. Integration tests exercise a subsequent reversal and re-return.
+- SQL Server datetime2 loses the .NET Kind. JSON responses explicitly serialize operational timestamps as UTC. One read-only session check retries after an aborted pooled SQL batch. Mutating business commands retain explicit transactions and request identities.
+- Independent screen review found chart labels difficult to read beside the opening-stock outlier. The daily chart now has a scale, keyboard-accessible exact values and an equivalent data table.
+
 | Area | Finding | Resolution or status |
 | --- | --- | --- |
 | Architecture and deployment | Kestrel held file locks on MSBuild output. | Start from a staged copy in .work/api-run. The stop script verifies the process entry point. Subsequent builds succeeded with the API running. |

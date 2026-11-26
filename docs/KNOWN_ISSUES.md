@@ -1,11 +1,8 @@
-# Known issues
+# Known issues and verification boundaries
 
-- The Codex sandbox identity cannot authenticate to local SQL Server. SQL verification runs with the Windows account via the managed tool permission.
-- The Docker daemon was not running during environment discovery.
-- The active Codex conversation's skill list was loaded before .NET skills were copied. See the inventory for verification by path and discovery status.
-- Standalone warehouse documents are implemented. Sales-order reservations, order-linked postings and finance remain pending.
-- Browser tests verify responsive layout and keyboard interaction in Chrome. Screen reader and other browser coverage remain unverified.
-- Vite reports two harmless annotation warnings from Zod's generated source when bundling with Rollup. The build produces the frontend successfully.
-- ESLint 9 is deprecated upstream. The project pins it for the current toolchain. A maintained ESLint upgrade and broader dependency review belong to the CI milestone.
-- The final npm lockfile passed dry-run validation. Clean installation and frontend tests with that exact dependency tree remain unverified. See the test report for the approval and cache results.
-- Rapid page navigation can cancel pending reads. SqlClient sometimes logs the server-side cancellation as an error even though the browser has already dropped the request.
+- Chromium/Chrome, keyboard flows and automated axe checks were exercised. Manual screen reader, Firefox, Safari and physical barcode scanners have no recorded verification. Native date fields follow the browser locale.
+- Vite emits two upstream Rollup annotation warnings in Zod. Both builds and browser verification completed. Native Node 24 and npm 11 were used for clean installation.
+- The test runner on Windows needs a SQL-capable Windows identity. The sandbox account cannot authenticate to local SQL Server itself. Integration databases use the MiniErp_Test prefix.
+- The historical stock report includes positions with ledger activity, and classifies slow stock by the last movement on or before the cutoff. Current product thresholds are used for historical low-stock classification. The reports do not determine lot-level stock age.
+- The workbook importer is create-only. Use the exported header, distinct new SKUs, active lookup codes, General numeric cells and at most 10,000 rows / 2 MB. Importing existing keys returns a row-specific error. Reversals are limited to the latest movement on all affected stock positions.
+- Deployment details and the observed Docker/CI state are recorded in [deployment](DEPLOYMENT.md) and the [test report](TEST_REPORT.md).

@@ -1,5 +1,19 @@
 # SQL Server performance
 
+## 26 November 2026, restored development copy
+
+Ran `database/performance/scale-restore.sql` against a fresh SQL Server Developer restore. Within one transaction it added 10,000 catalog products, 10,000 warehouse positions, 100,000 posted receipt lines and 100,000 signed ledger movements. The measured ledger contained 100,104 rows.
+
+| Query | Reads and execution time on this run |
+| --- | --- |
+| Exact SKU lookup | Products 4 logical reads, 1 ms elapsed. |
+| Inventory procedure, literal substring, 15-row page | Each result set read Products 249, Balances 137 and Lookups 2 pages. Total procedure elapsed 148 ms including compilation, with 125 ms CPU. |
+| Net movements grouped by date across seven days | Movements 1,418 logical reads, zero physical reads, 65 ms elapsed and 63 ms CPU. Seven of the ten inserted dates matched. |
+
+The exact key seek stays selective; the substring-filtered count and page each scan matching candidates. The period query aggregated most of the synthetic history, for which a scan was expected. These are single local observations with warm pages, not latency percentiles. The script validated original counts after rollback (109 products, 97 balances, 104 movements). SQL identity sequences can advance on a rolled-back insert, hence the required disposable restore prefix.
+
+## Original catalog checkpoint
+
 Ran database/performance/catalog-and-inventory.sql on MiniErp with SQLCMD, using STATISTICS IO, STATISTICS TIME and SHOWPLAN_TEXT.
 
 | Query | Observed logical reads | Observed plan or shape |

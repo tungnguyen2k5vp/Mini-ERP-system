@@ -339,6 +339,147 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("MiniErp.Domain.Finance.FinanceInvoice", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(19, 2)
+                        .HasColumnType("decimal(19,2)");
+
+                    b.Property<decimal>("CostAmount")
+                        .HasPrecision(19, 2)
+                        .HasColumnType("decimal(19,2)");
+
+                    b.Property<byte>("Direction")
+                        .HasColumnType("tinyint");
+
+                    b.Property<DateTime>("DueAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsCredit")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("IssuedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("OrderId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("OrderNumber")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid>("PartnerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("StockDocumentId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("PartnerId");
+
+                    b.HasIndex("StockDocumentId")
+                        .IsUnique();
+
+                    b.HasIndex("Direction", "PartnerId", "DueAtUtc");
+
+                    b.ToTable("Invoices", "finance", t =>
+                        {
+                            t.HasCheckConstraint("CK_Invoices_Amounts", "[Amount] >= 0 AND [CostAmount] >= 0");
+
+                            t.HasCheckConstraint("CK_Invoices_Dates", "[DueAtUtc] >= [IssuedAtUtc]");
+
+                            t.HasCheckConstraint("CK_Invoices_Direction", "[Direction] IN (1,2)");
+                        });
+                });
+
+            modelBuilder.Entity("MiniErp.Domain.Finance.FinancePayment", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(19, 2)
+                        .HasColumnType("decimal(19,2)");
+
+                    b.Property<byte>("Direction")
+                        .HasColumnType("tinyint");
+
+                    b.Property<bool>("IsRefund")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("PartnerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("PaymentMethodId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte>("PaymentMethodKind")
+                        .HasColumnType("tinyint");
+
+                    b.Property<DateTime>("PostedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Reference")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId")
+                        .IsUnique();
+
+                    b.HasIndex("PartnerId", "PostedAtUtc");
+
+                    b.HasIndex("PaymentMethodKind", "PaymentMethodId");
+
+                    b.ToTable("Payments", "finance", t =>
+                        {
+                            t.HasCheckConstraint("CK_Payments_Amount", "[Amount] > 0");
+
+                            t.HasCheckConstraint("CK_Payments_Direction", "[Direction] IN (1,2)");
+
+                            t.HasCheckConstraint("CK_Payments_Method", "[PaymentMethodKind] = 4");
+                        });
+                });
+
+            modelBuilder.Entity("MiniErp.Domain.Finance.PaymentAllocation", b =>
+                {
+                    b.Property<long>("PaymentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("InvoiceId")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(19, 2)
+                        .HasColumnType("decimal(19,2)");
+
+                    b.HasKey("PaymentId", "InvoiceId");
+
+                    b.HasIndex("InvoiceId");
+
+                    b.ToTable("Allocations", "finance", t =>
+                        {
+                            t.HasCheckConstraint("CK_Allocations_Amount", "[Amount] > 0");
+                        });
+                });
+
             modelBuilder.Entity("MiniErp.Domain.Inventory.StockBalance", b =>
                 {
                     b.Property<Guid>("WarehouseId")
@@ -552,6 +693,164 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_Movements_Amounts", "[QuantityDelta] <> 0 AND [BalanceAfter] >= 0 AND [UnitCost] >= 0 AND [PreviousAverageCost] >= 0");
 
                             t.HasCheckConstraint("CK_Movements_Warehouse", "[WarehouseKind] = 3");
+                        });
+                });
+
+            modelBuilder.Entity("MiniErp.Domain.Orders.OrderFulfillment", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(19, 2)
+                        .HasColumnType("decimal(19,2)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsReturn")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("OrderId")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int?>("ReversesId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("StockDocumentId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("RequestId")
+                        .IsUnique();
+
+                    b.HasIndex("ReversesId")
+                        .IsUnique()
+                        .HasFilter("[ReversesId] IS NOT NULL");
+
+                    b.HasIndex("StockDocumentId")
+                        .IsUnique();
+
+                    b.ToTable("Fulfillments", "orders", t =>
+                        {
+                            t.HasCheckConstraint("CK_Fulfillments_Amount", "[Amount] >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("MiniErp.Domain.Orders.OrderLine", b =>
+                {
+                    b.Property<int>("OrderId")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("FulfilledQuantity")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.Property<string>("ProductName")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("nvarchar(160)");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.Property<decimal>("ReservedQuantity")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.Property<decimal>("ReturnedQuantity")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.Property<string>("Sku")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<decimal>("UnitPrice")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.HasKey("OrderId", "ProductId");
+
+                    b.HasIndex("ProductId");
+
+                    b.ToTable("OrderLines", "orders", t =>
+                        {
+                            t.HasCheckConstraint("CK_OrderLines_Amounts", "[Quantity] > 0 AND [UnitPrice] >= 0 AND [FulfilledQuantity] BETWEEN 0 AND [Quantity] AND [ReturnedQuantity] BETWEEN 0 AND [FulfilledQuantity] AND [ReservedQuantity] >= 0 AND [ReservedQuantity] <= [Quantity] - [FulfilledQuantity]");
+                        });
+                });
+
+            modelBuilder.Entity("MiniErp.Domain.Orders.TradeOrder", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte>("Kind")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<Guid>("PartnerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte>("Status")
+                        .HasColumnType("tinyint");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<Guid>("WarehouseId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte>("WarehouseKind")
+                        .HasColumnType("tinyint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PartnerId");
+
+                    b.HasIndex("RequestId")
+                        .IsUnique();
+
+                    b.HasIndex("WarehouseKind", "WarehouseId");
+
+                    b.HasIndex("Kind", "PartnerId", "Id");
+
+                    b.ToTable("Orders", "orders", t =>
+                        {
+                            t.HasCheckConstraint("CK_Orders_State", "[Kind] IN (1,2) AND [Status] BETWEEN 1 AND 6 AND [WarehouseKind] = 3");
                         });
                 });
 
@@ -803,6 +1102,58 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
                     b.Navigation("Unit");
                 });
 
+            modelBuilder.Entity("MiniErp.Domain.Finance.FinanceInvoice", b =>
+                {
+                    b.HasOne("MiniErp.Domain.Orders.TradeOrder", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MiniErp.Domain.Catalog.BusinessPartner", null)
+                        .WithMany()
+                        .HasForeignKey("PartnerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MiniErp.Domain.Inventory.StockDocument", null)
+                        .WithMany()
+                        .HasForeignKey("StockDocumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MiniErp.Domain.Finance.FinancePayment", b =>
+                {
+                    b.HasOne("MiniErp.Domain.Catalog.BusinessPartner", null)
+                        .WithMany()
+                        .HasForeignKey("PartnerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MiniErp.Domain.Catalog.CatalogLookup", null)
+                        .WithMany()
+                        .HasForeignKey("PaymentMethodKind", "PaymentMethodId")
+                        .HasPrincipalKey("Kind", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MiniErp.Domain.Finance.PaymentAllocation", b =>
+                {
+                    b.HasOne("MiniErp.Domain.Finance.FinanceInvoice", null)
+                        .WithMany("Allocations")
+                        .HasForeignKey("InvoiceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MiniErp.Domain.Finance.FinancePayment", null)
+                        .WithMany("Allocations")
+                        .HasForeignKey("PaymentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("MiniErp.Domain.Inventory.StockBalance", b =>
                 {
                     b.HasOne("MiniErp.Domain.Catalog.Product", null)
@@ -883,6 +1234,61 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
                     b.Navigation("Document");
                 });
 
+            modelBuilder.Entity("MiniErp.Domain.Orders.OrderFulfillment", b =>
+                {
+                    b.HasOne("MiniErp.Domain.Orders.TradeOrder", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MiniErp.Domain.Orders.OrderFulfillment", null)
+                        .WithMany()
+                        .HasForeignKey("ReversesId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("MiniErp.Domain.Inventory.StockDocument", null)
+                        .WithMany()
+                        .HasForeignKey("StockDocumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MiniErp.Domain.Orders.OrderLine", b =>
+                {
+                    b.HasOne("MiniErp.Domain.Orders.TradeOrder", null)
+                        .WithMany("Lines")
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MiniErp.Domain.Catalog.Product", null)
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MiniErp.Domain.Orders.TradeOrder", b =>
+                {
+                    b.HasOne("MiniErp.Domain.Catalog.BusinessPartner", "Partner")
+                        .WithMany()
+                        .HasForeignKey("PartnerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MiniErp.Domain.Catalog.CatalogLookup", "Warehouse")
+                        .WithMany()
+                        .HasForeignKey("WarehouseKind", "WarehouseId")
+                        .HasPrincipalKey("Kind", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Partner");
+
+                    b.Navigation("Warehouse");
+                });
+
             modelBuilder.Entity("MiniErp.Infrastructure.Auth.RefreshSession", b =>
                 {
                     b.HasOne("MiniErp.Infrastructure.Auth.ErpUser", "User")
@@ -894,7 +1300,22 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("MiniErp.Domain.Finance.FinanceInvoice", b =>
+                {
+                    b.Navigation("Allocations");
+                });
+
+            modelBuilder.Entity("MiniErp.Domain.Finance.FinancePayment", b =>
+                {
+                    b.Navigation("Allocations");
+                });
+
             modelBuilder.Entity("MiniErp.Domain.Inventory.StockDocument", b =>
+                {
+                    b.Navigation("Lines");
+                });
+
+            modelBuilder.Entity("MiniErp.Domain.Orders.TradeOrder", b =>
                 {
                     b.Navigation("Lines");
                 });

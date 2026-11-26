@@ -1,5 +1,5 @@
 import { Boxes, Building2, ChevronRight, ClipboardList, CreditCard, FileText, History, LogOut, Menu, Package, Ruler,
-  ShieldCheck, Tags, UserRound, UsersRound, Warehouse, X } from 'lucide-react'
+  ShieldCheck, Tags, UserRound, UsersRound, Warehouse, X, LayoutDashboard, ShoppingCart, Truck, ChartNoAxesCombined, Search } from 'lucide-react'
 import { Suspense, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router'
 import { Brand } from '../components/brand'
@@ -7,8 +7,16 @@ import { ErrorNotice, Loading } from '../components/feedback'
 import { Button } from '../components/ui/button'
 import { logout, type Profile } from '../lib/api'
 import { roleLabel } from '../lib/labels'
+import { NotificationMenu } from '../components/notifications'
 
 const navigation = [
+  { group: 'Điều hành', items: [
+    { name: 'Tổng quan', path: '/tong-quan', icon: LayoutDashboard, permission: 'Reports.View' },
+    { name: 'Đơn mua hàng', path: '/mua-hang', icon: ShoppingCart, permission: 'Purchasing.View' },
+    { name: 'Đơn bán hàng', path: '/ban-hang', icon: Truck, permission: 'Sales.View' },
+    { name: 'Công nợ & thanh toán', path: '/tai-chinh', icon: CreditCard, permission: 'Finance.View' },
+    { name: 'Báo cáo tồn kho', path: '/bao-cao', icon: ChartNoAxesCombined, permission: 'Reports.View&Inventory.View' },
+  ] },
   { group: 'Kho vận', items: [
     { name: 'Tồn kho', path: '/ton-kho', icon: Boxes, permission: 'Inventory.View' },
     { name: 'Chứng từ kho', path: '/ton-kho/chung-tu', icon: FileText, permission: 'Inventory.View' },
@@ -29,6 +37,7 @@ const navigation = [
     { name: 'Hồ sơ cá nhân', path: '/tai-khoan', icon: UserRound, permission: '' },
   ] },
   { group: 'Quản trị hệ thống', items: [
+    { name: 'Nhật ký hệ thống', path: '/nhat-ky', icon: History, permission: 'System.Audit' },
     { name: 'Người dùng', path: '/nguoi-dung', icon: UsersRound, permission: 'System.Users' },
     { name: 'Vai trò và quyền', path: '/vai-tro', icon: ShieldCheck, permission: 'System.Roles' },
   ] },
@@ -75,12 +84,15 @@ export function AppShell({ profile }: { profile: Profile }) {
           <Button variant="ghost" type="button" className="icon-button nav-toggle" aria-label="Mở điều hướng"
             aria-haspopup="dialog" aria-controls="mobile-navigation" onClick={() => dialog.current?.showModal()}><Menu size={22} /></Button>
           <nav aria-label="Đường dẫn" className="breadcrumb"><span>MiniErp</span><ChevronRight size={14} aria-hidden />
-            <span aria-current="page">{active?.name ?? 'Trang hiện tại'}</span></nav>
+            <span aria-current="page">{active?.name ?? (location.pathname === '/tim-kiem' ? 'Tìm kiếm' : 'Trang hiện tại')}</span></nav>
         </div>
-        <NavLink to="/tai-khoan" className="topbar-account" aria-label="Hồ sơ cá nhân">
+        <div className="topbar-tools"><NavLink className="shell-search" to="/tim-kiem" aria-label="Tìm kiếm toàn hệ thống"><Search size={18} aria-hidden /><span>Tìm kiếm</span></NavLink>{profile.permissions.includes('Reports.View') && <NotificationMenu />}
+        <NavLink to="/tai-khoan" className="topbar-account">
+          <span className="sr-only">Hồ sơ cá nhân · </span>
           <span className="avatar" aria-hidden>{initials}</span>
           <span><strong>{profile.displayName}</strong><small>{profile.roles.map(roleLabel).join(', ')}</small></span>
         </NavLink>
+        </div>
       </header>
       <main className="workspace-main" id="main" tabIndex={-1}>
         <ErrorNotice error={exitError} />
@@ -93,7 +105,7 @@ export function AppShell({ profile }: { profile: Profile }) {
 function Navigation({ profile, onNavigate }: { profile: Profile; onNavigate?: () => void }) {
   return <nav className="side-nav" aria-label="Điều hướng chính">
     {navigation.map(section => {
-      const items = section.items.filter(item => !item.permission || profile.permissions.includes(item.permission))
+      const items = section.items.filter(item => !item.permission || item.permission.split('&').every(grant => profile.permissions.includes(grant)))
       return items.length > 0 && <div className="side-group" key={section.group}>
         <p>{section.group}</p>
         {items.map(item => <NavLink key={item.path} to={item.path} onClick={onNavigate} end={item.path === '/ton-kho'}>

@@ -25,4 +25,4 @@ public sealed record StockMovementRow(long Id, int DocumentId, string DocumentNu
     string WarehouseName, Guid ProductId, string Sku, decimal QuantityDelta, decimal UnitCost,
     decimal BalanceAfter, DateTimeOffset PostedAt);
 
-public sealed record StockProductOption(Guid Id, string Sku, string Name, decimal PurchasePrice);
+public sealed record StockProductOption(Guid Id, string Sku, string Name, decimal PurchasePrice, decimal SalePrice);
