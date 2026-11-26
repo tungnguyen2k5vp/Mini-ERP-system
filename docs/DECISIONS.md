@@ -11,4 +11,7 @@
 - Use moving average per warehouse and product, rounded to four decimal places. Capture issue cost in the ledger at posting and carry it into the destination for a transfer.
 - Reverse only a document that is still the latest movement across every affected position. Later corrections use a new adjustment. A count draft captures the balance versions at entry and requires a recount when stock changes.
 - The Inventory.Post grant permits creating, posting, cancelling and reversing warehouse documents. Inventory.View gates the document and balance reads.
-- Pin the Hook Form Zod adapter at 5.2.2 for reproducible npm ci with npm 11.6.2 and ESLint 9.
+- Pin the Hook Form Zod adapter at 5.2.2 and regenerate the npm graph in an empty directory. The verified toolchain uses ESLint 10 and Node 24.
+- Purchase and sales share order and fulfillment tables. Kind-scoped policies separate their actions. A credit uses the original order, merchandise quantities and actual posted costing.
+- Use a dedicated demo warehouse and a development-only clock to create real historical movements through the same posting, settlement and validation code. Stable request keys and one seed marker protect repeat runs.
+- PDF output uses the browser print layout. Product workbooks are ordinary XLSX with bounded ZIP/XML validation. Scanner keyboards can enter the existing SKU search.

@@ -12,4 +12,6 @@ CatalogMasterData introduces typed lookups, products and business partners. A pr
 
 StockLedger introduces one balance per warehouse and product, document heads and lines, and an immutable movement ledger. Unit cost and quantities use decimal(19,4). Transfers produce two movements with opposite quantities and the same transferred unit cost. A unique document/warehouse/product key prevents repeated movements. Document state and rowversion prevent repeated posting and stale stock writes. The reversal FK links an inverse document to a single original.
 
-Reporting views and procedures are versioned in the same migrations. The inventory view computes Available as OnHand minus Reserved. Low-stock alerts cover active SKUs with a recorded warehouse position. Reservation writes will be connected to sales approval.
+Reporting views and procedures are versioned in the same migrations. The inventory view computes Available as OnHand minus Reserved. Sales approval, cancellation and shipment update the actual reserved balance in the same transaction as order-line reservations.
+
+OrdersAndFinance adds orders, lines and fulfillments in the orders schema and invoices, payments and allocations in the finance schema. Each fulfillment and internal invoice has a unique source stock document. Payment allocations use the payment/invoice pair as key. Two-decimal invoice amounts and four-decimal inventory amounts preserve their distinct business precision. The database uses restrictive historical references. [Financial rules](FINANCE.md)

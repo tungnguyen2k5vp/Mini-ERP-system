@@ -36,3 +36,26 @@ sequenceDiagram
         A-->>U: Problem Details
     end
 ~~~
+
+## Fulfillment and payment
+
+~~~mermaid
+sequenceDiagram
+    participant O as Operator
+    participant C as OrderService
+    participant I as StockService
+    participant F as FinanceService
+    participant D as SQL Server
+    O->>C: Post partial shipment with request ID
+    C->>D: Begin transaction and lock order
+    C->>D: Check request, remaining units and reservation
+    C->>I: Issue actual units in shared transaction
+    I->>D: Update balance and record ledger cost
+    C->>F: Stage invoice for posted stock document
+    F->>D: Record source, amount, due date and cost
+    C->>D: Save fulfillment and audit, commit
+    O->>F: Allocate payment to invoices
+    F->>D: Lock source orders in ID order
+    F->>D: Check credits, prior cash and outstanding balances
+    F->>D: Commit payment, allocations and audit
+~~~

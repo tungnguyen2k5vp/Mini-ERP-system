@@ -2,11 +2,11 @@
 
 ## Tiếng Việt
 
-Hệ thống Mini ERP quản lý danh mục và kho nhiều địa điểm cho doanh nghiệp phân phối. Ứng dụng dùng ASP.NET Core, SQL Server và React để ghi sổ nhập, xuất, chuyển, điều chỉnh và kiểm kê kho có truy vết.
+Hệ thống Mini ERP cho doanh nghiệp phân phối. Đơn mua và đơn bán liên kết với tồn kho nhiều địa điểm, hóa đơn nội bộ, công nợ và thanh toán. Có kiểm thử đồng thời và truy vết từ giao dịch đến chứng từ nguồn.
 
 ## English
 
-Mini ERP for catalog administration and multi-warehouse inventory. It uses an ASP.NET Core modular monolith, SQL Server, and React to track posted receipts, issues, transfers, adjustments, and counts.
+Mini ERP for purchasing, sales, multi-warehouse inventory and operational finance. An ASP.NET Core modular monolith, SQL Server and React track each shipment or receipt through settlement.
 
 ## CV bullet points
 
@@ -15,5 +15,7 @@ Mini ERP for catalog administration and multi-warehouse inventory. It uses an AS
 - Enforced SQL Server referential integrity, unique business keys and optimistic concurrency via rowversion.
 - Queried a SQL view and parameterized stored procedure using Dapper for inventory balance and low-stock reports.
 - Tested authentication, database rules, stock conflicts and browser workflows using xUnit, WebApplicationFactory, SQL Server and Playwright.
+- Linked approved orders, partial shipments, stock reservations, returns and internal invoices in a shared SQL transaction. Enforced idempotent posting and tested competing reservations and allocations.
+- Built aging, reconciliation and gross-profit reporting from signed documents and recorded inventory costs, including unpaid and cash-backed returns.
 
 See [test results](../TEST_REPORT.md) for verified scenarios and the current checkpoint.

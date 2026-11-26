@@ -1,23 +1,17 @@
 # Project status
 
-Updated 2026-11-25. Read [tasks](TASKS.md), [decisions](DECISIONS.md), [next steps](NEXT_STEPS.md) and [test report](TEST_REPORT.md) before continuing.
+Updated 2026-11-26. [Test evidence](TEST_REPORT.md) · [Handover](HANDOVER.md) · [Open checks](NEXT_STEPS.md)
 
-| Milestone | Status |
+| Milestone | Implemented and checked |
 | --- | --- |
-| 1. Skills, environment, solution, database, authentication | Verified |
-| 2. Catalog and partners | Verified for master data |
-| 3. Warehouse and inventory | Verified for standalone stock documents |
-| 4. Purchasing and receipts | Pending |
-| 5. Sales, reservations and shipments | Pending |
-| 6. Invoices, payments and returns | Pending |
-| 7. Reporting, activity and spreadsheets | Pending |
-| 8. Security, performance, Docker and CI | Pending |
-| 9. Portfolio, interview and demo | Pending |
+| 1–3. Foundation, catalog and stock | Existing Identity, catalog, partner, inventory and reversal regression suites pass against SQL Server and Chrome. |
+| 4. Purchasing | Approval, partial receipt, over-receipt rejection, return, reversal, supplier history and source-linked payables. |
+| 5. Sales | Atomic reservations, competing approvals, partial shipment, release on cancellation, returns and recorded shipment cost. |
+| 6. Internal finance | Invoice-per-movement, credit offsets, cash-backed refunds, multi-invoice allocation, concurrency, aging and reconciliation. |
+| 7. Reports and UI | Role-specific dashboard, product ranking and gross margin, historical stock with low/slow filters, audit, search, workbook validation and printable documents. |
+| 8. Operations | Locked installs, advisory checks, structured logs, a copy-only restore rehearsal, a 100,000-movement SQL benchmark and verified Compose startup on Windows and Ubuntu CI. |
+| 9. Portfolio | English/Vietnamese README, workflow and ERD diagrams, screenshots, real PDF, CV notes, 100 backend interview questions, 25 React prompts and 50 SQL exercises. |
 
-SQL Server 2022 Developer is reachable under Windows Authentication outside the Codex sandbox. InitialIdentity was applied to MiniErp and MiniErp_Test. Backend build, xUnit and frontend build passed. Chrome passed desktop and mobile Identity flows and captured real [screenshots](screenshots/). Docker Compose is installed and its engine was stopped at initial inspection.
+The 6-month commercial demo contains 100 purchase orders, 200 sales orders, 370 internal invoices/credits and 200 partial payments. Each is generated through the normal application services. An isolated warehouse and deterministic command IDs keep it separate from existing stock.
 
-CatalogMasterData was applied to both databases. API and browser verification covered product creation, typed references, SKU uniqueness, stale edits, partner scoping, access control and deactivation. Spreadsheet workflows and partner transaction history belong to later milestones.
-
-StockLedger was applied to both databases. The stock pipeline, moving average, concurrent issues, rollback and reversal checks passed. Playwright exercised a transfer and its reversal through the running UI and checked mobile stock filtering. Sales-order reservations are part of milestone 5.
-
-The next milestone is purchasing and partial receipt. See [handover](HANDOVER.md), [test results](TEST_REPORT.md) and [next steps](NEXT_STEPS.md).
+[Local and container deployment](DEPLOYMENT.md) · [SQL performance](SQL_PERFORMANCE.md) · [Known issues](KNOWN_ISSUES.md)

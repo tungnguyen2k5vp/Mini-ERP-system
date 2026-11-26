@@ -1,17 +1,13 @@
 # Tasks
 
-- [x] Discover workspace instructions, installed skills and development tools.
-- [x] Stage the official .NET skills source and install selected skill directories.
-- [x] Verify installed skills and complete the authentication slice with migrations, xUnit and Chrome.
-- [x] Build catalog and partners with server-side paging and validated updates.
-- [x] Build and verify stock ledger, balance, standalone receipt and issue, transfers, adjustments, counts and reversals.
-- [ ] Build purchase orders, partial receipts and approval.
-- [ ] Build sales orders, reservation, partial shipment and cancellation.
-- [ ] Build invoicing, payments, aged balances and returns.
-- [ ] Build reports and dashboard, audit listing and spreadsheet workflows.
-- [ ] Verify security, SQL performance, container deployment and CI.
-- [ ] Finish demo, portfolio docs, question banks and tested SQL exercises.
+- [x] Inspect the existing solution, handover and project instructions. Outline acceptance gates in [implementation plan](IMPLEMENTATION_PLAN.md).
+- [x] Clean npm and locked NuGet installs. Dependency advisory checks and existing regression suite.
+- [x] Purchase and sales orders, approvals, partial receipts/shipments, reservations, cancellation, linked returns and reversals.
+- [x] Internal invoices, credit offsets, cash-backed refunds, multi-invoice payments, aging and reconciliation.
+- [x] Dashboard, stock and margin reporting, filtered search, audit, notifications, catalog XLSX, A4 output and responsive UI.
+- [x] Real six-month demo, diagrams, portfolio guides, interview material and runnable SQL exercises.
+- [x] Non-destructive copy-only backup, restore under a new name and database integrity check.
+- [x] SQL benchmark with 100,000 added movements in a transaction on a restored copy. [Measurements](SQL_PERFORMANCE.md)
+- [x] Compose startup and same-origin login on Windows Docker Desktop and Ubuntu GitHub Actions. [Deployment evidence](DEPLOYMENT.md)
 
-The checkpoint includes a transfer demo, CV bullets and a seven-day walkthrough. The purchasing and sales demos, the 50-question C# and SQL banks and the 50 SQL exercises remain open.
-
-When registry access is available, run scripts/setup.ps1 and scripts/test-all.ps1 -Browser with the final npm lockfile.
+See [test results](TEST_REPORT.md), [SQL evidence](SQL_PERFORMANCE.md) and [remaining scope](NEXT_STEPS.md).

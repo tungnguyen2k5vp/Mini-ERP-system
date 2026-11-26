@@ -17,3 +17,5 @@
 | agency-database-reliability-engineer, dotnet/optimizing-ef-core-queries | Validate migrations on separate databases and use a single transaction for inventory balance, document, ledger and audit writes. |
 | agency-code-reviewer, dotnet/assertion-quality | Review version handling, stock status transitions and conflict, rollback and reversal assertions. See CODE_REVIEW_REPORT.md. |
 | Impeccable and agency-accessibility-auditor | Inspect actual desktop and mobile images, run the Impeccable detector, and test keyboard focus, axe login and page overflow with Chrome. |
+| .NET Web API and EF Core workspace skills | Extend the existing endpoint and persistence patterns for stock-linked fulfillment, partial settlement and role-based reporting. Verify transactions and concurrency on SQL Server with xUnit. |
+| Impeccable, Playwright and PDF inspection | Inspect purchasing, sales, reports and finance workspaces at desktop, tablet and mobile sizes. Check the browser-generated A4 purchase with a rendered page. [UI evidence](UI_BUSINESS_WORKSPACES.md) |

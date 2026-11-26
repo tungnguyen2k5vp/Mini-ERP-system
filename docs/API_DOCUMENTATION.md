@@ -18,6 +18,25 @@ Cookie-backed POSTs require X-MiniErp-Session equal to 1 and Origin equal to Aut
 
 See [HTTP requests](../backend/MiniErp.http).
 
+## Commercial documents
+
+| Relative route | Contract and authorization |
+| --- | --- |
+| GET /orders and /orders/options | `kind=1` for purchase, `kind=2` for sales. Lists accept partner, status, search, sort and pagination. Options belong to the selected module. |
+| POST /orders | Create a draft with a UUID requestId, kind, partnerId, warehouseId and lines containing productId, quantity and unitPrice. Requires the corresponding Create grant. |
+| GET /orders/{id} | Reads the actual order kind and enforces its View policy. Returns the version, lines and linked fulfillment records. |
+| POST /orders/{id}/submit, /approve, /cancel | Body contains the latest version. Approval reserves sales quantities. Cancellation releases the unshipped remainder. |
+| POST /orders/{id}/fulfill | Send requestId, isReturn and product/quantity lines. Requires the order module's View and Inventory.Post. Returns linked stock and invoicing results through the detail APIs. |
+| POST /orders/{id}/fulfillments/{fulfillmentId}/reverse | Links the inverse operation to the source. A newer position movement can prevent reversal. |
+| GET /finance/invoices, /finance/payments, /finance/options | Finance.View. Filter by partner/direction. Use invoiceId to follow an exact invoice. |
+| POST /finance/payments | Finance.Post plus Finance.View. Send requestId, partnerId, direction, isRefund, paymentMethodId, amount and an array of invoiceId/amount allocations. |
+| GET /finance/aging and /finance/reconciliation | Historical asOf is an ISO timestamp with UTC Z. Receivable direction is 1, payable is 2. |
+| GET /reports/dashboard and /reports/stock | Date filters from/to are inclusive UTC calendar dates. Metric visibility follows current permissions. Stock reports reconstruct opening, inflow, outflow and closing and accept warehouseId and filter (all, low, slow). |
+| GET /search and /audit | Search only returns accessible records. Audit requires System.Audit and supports date filtering and pagination. |
+| GET or POST /catalog/products/workbook | Download an XLSX with Export, or upload multipart field file with Create. Both require Catalog.View. The import creates a whole batch or returns a validation error. |
+
+A successful retry of an unchanged fulfillment or payment returns the existing result. A reused key carrying different input is rejected. Distinct request IDs represent distinct business operations. [Financial settlement](FINANCE.md)
+
 ## Catalog
 
 Use GET and POST on /products, /categories, /units, /warehouses, /payment-methods, /customers and /suppliers. GET and PUT on each ID address the detail. Assign active status with PUT and the current version. List filters include search, active, page, pageSize, sort and descending. Products also accept categoryId.

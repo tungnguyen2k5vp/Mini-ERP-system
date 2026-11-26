@@ -1,6 +1,7 @@
 # Next steps
 
-1. Implement purchase order and line models with supplier, warehouse, price snapshot and approved quantities. Add Draft, PendingApproval, Approved, PartiallyReceived, Received, Completed and Cancelled transitions and enforce the Purchasing policies.
-2. Link a dedicated goods receipt to a purchase order. Check remaining quantity per line when posting. Reuse StockBalance and ledger costing inside the same SQL transaction as updating the order. Test two partial receipts, duplicate posting, over-receipt and rollback before enabling the browser workflow.
-3. Build sales approval and quantity reservations scoped to individual order lines, then partial issue and cancellation. Run the two-attempt reservation scenario against MiniErp_Test.
-4. Add invoices, adjustments, allocations, aging and reports from the posted records. Expand seed history, Excel operations, deployment and interview material against those workflows.
+- Use the supplier-to-payment and customer-to-payment walkthroughs in [the demo](DEMO_GUIDE.md). Record follow-up product decisions against observable business rules and the regression suite.
+- Inspect the latest [verification](TEST_REPORT.md), [deployment evidence](DEPLOYMENT.md) and [SQL measurements](SQL_PERFORMANCE.md) before repeating environment-dependent checks.
+- Order status tracks stock fulfillment. Finance tracks settlement separately. The price snapshot records the agreed unit price, with no separate discount field.
+- The portfolio scope uses internal invoices, order-level credits and a keyboard/SKU search. A dedicated quotation lifecycle, hardware barcode management, statutory accounting and electronic tax invoices would each require additional product requirements.
+- For a public deployment, separately authorize the target and verify TLS, environment-specific credentials and recoverability there. The local restore drill and development Compose configuration cover only their named targets.

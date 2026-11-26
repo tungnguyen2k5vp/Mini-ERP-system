@@ -14,4 +14,5 @@
 - **Chống SQL injection thế nào?** EF tạo tham số cho truy vấn LINQ. Dapper truyền tham số của procedure. Sort dùng danh sách cột cho phép.
 - **Kiểm thử nghiệp vụ ở đâu?** InventoryTests chạy qua WebApplicationFactory và MiniErp_Test. Playwright dùng trình duyệt thật và API thật. StockBalanceTests kiểm tra công thức.
 - **Khó khăn thực tế?** Windows khóa DLL của Kestrel. Chạy từ thư mục .work/api-run giúp build được khi phiên xem trước còn chạy.
-- **Phần cần mở rộng?** Đơn mua, đơn bán, giữ hàng theo đơn, hóa đơn và công nợ sẽ nối vào chứng từ kho ở milestone sau.
+- **Tại sao số phải thu khác số tiền đã giao hàng?** Phiếu giao làm phát sinh hóa đơn, phiếu trả lập chứng từ giảm. Số phải thu còn lại tính sau bù trừ và phân bổ tiền. Chỉ được hoàn số tiền thực thu tương ứng theo đơn.
+- **Bài tập và câu hỏi dựa vào đâu?** Các bộ câu hỏi liên hệ trực tiếp với entity, truy vấn, API và kiểm thử của hệ thống. [Câu hỏi C#, SQL, React và 50 bài SQL](README.md)

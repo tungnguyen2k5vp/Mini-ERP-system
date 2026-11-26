@@ -14,4 +14,8 @@ Choose a document type and an active warehouse. Use distinct source and destinat
 
 A posted document remains in the ledger. To reverse it, open its detail and choose Đảo chứng từ. The API rejects reversal when later ledger activity exists for an affected balance. Successful reversal adds an inverse document, restores the prior average cost and links both records. Reposting an already posted document does not modify balances again.
 
-Sales-order reservations, partial receipts linked to purchase orders, shipments linked to sales orders and financial settlement are planned in later milestones.
+## Orders and settlement
+
+The order snapshots the agreed quantity and unit price per product. Submission and approval use the current order version. Sales approval reserves quantities per line. Partial shipment releases only what ships. Cancellation releases the remainder. Receipt or shipment checks the unfulfilled quantity and writes the order line, stock movement, balance, invoice and audit in a single database transaction.
+
+A return is capped at the net quantity delivered and creates its own stock movement and credit. A correction reverses the latest eligible posting through its source order. Previous invoice and cash records remain available. See [settlement rules](FINANCE.md) for cash limits, credit offsets, refunds and aging.

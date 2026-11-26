@@ -9,3 +9,5 @@ MiniErp uses a modular monolith running on ASP.NET Core and a single SQL Server 
 - The React client uses TanStack Query for server state and React Hook Form with Zod for form validation.
 
 See [component diagram](../diagrams/COMPONENT_DIAGRAM.md), [database design](../DATABASE_DESIGN.md), [sequence diagrams](../diagrams/SEQUENCE_DIAGRAMS.md) and [decisions](ADR.md).
+
+Orders coordinates StockService and IFinancePosting within one ErpDbContext transaction for receipts, shipments, returns and reversals. A distinct finance transaction locks the affected orders and allocates payments after computing actual collectible or refundable amounts. Reporting uses parameterized SQL over movements, invoices and payments. OrderDemoSeed exercises these same service methods on an isolated development warehouse over six months.
