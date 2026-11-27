@@ -20,6 +20,7 @@ using MiniErp.Api.Orders;
 using MiniErp.Api.Finance;
 using MiniErp.Api.Reporting;
 using MiniErp.Application.Finance;
+using MiniErp.Application.Orders;
 using MiniErp.Infrastructure.Orders;
 using MiniErp.Infrastructure.Finance;
 using MiniErp.Infrastructure.Reporting;
@@ -50,6 +51,13 @@ builder.Services.AddScoped<CatalogSeed>();
 builder.Services.AddScoped<StockService>();
 builder.Services.AddScoped<InventoryReport>();
 builder.Services.AddScoped<StockDemoSeed>();
+builder.Services.AddSingleton(services =>
+{
+    var threshold = services.GetRequiredService<IConfiguration>().GetValue<decimal?>("Orders:ApprovalThresholdVnd");
+    if (threshold is <= 0 or > 999_999_999_999m || threshold is decimal amount && decimal.Round(amount, 2) != amount)
+        throw new InvalidOperationException("Orders__ApprovalThresholdVnd must be a positive order amount with at most two decimal places.");
+    return new OrderApprovalPolicy(threshold);
+});
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<OrderDemoSeed>();
 builder.Services.AddScoped<FinanceService>();
@@ -119,6 +127,7 @@ builder.Services.AddOpenApi("v1");
 builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("sql-server", tags: ["ready"]);
 
 var app = builder.Build();
+_ = app.Services.GetRequiredService<OrderApprovalPolicy>();
 if (args.Any(commands.Contains))
 {
     await using var scope = app.Services.CreateAsyncScope();

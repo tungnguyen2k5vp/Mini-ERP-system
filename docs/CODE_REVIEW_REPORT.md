@@ -1,5 +1,18 @@
 # Code review checkpoint
 
+## V2 milestone 2 · 27 November 2026
+
+| Finding | Correction and verification |
+| --- | --- |
+| A create retry compared its payload to mutable draft lines. | Serialize concurrent creates on the request ID and compare an immutable SHA-256 projection. Preserve decimal equivalence, line order independence and the original command on the first edit of a migrated draft. |
+| Replaying a stock post could reject the original version after the first post succeeded. | Store the submitted token and the actor with the successful audit event. An exact retry returns the existing result. An edited draft requires a version. SQL regression checks one movement and one post event. |
+| EF could retain accepted intermediate changes after the encompassing transaction rolled back. Separate detail queries could combine two revisions. | Outer commands clear tracked state when they end. Hold the document header lock through the caller's transaction, including a READ COMMITTED create retry. A SQL regression holds the reader open, observes a writer lock timeout, then releases the reader and verifies exactly one edit. A separate HTTP race checks the complete winning draft and its author. |
+| A stale editor could discard local work or apply it against a silently refreshed version. Restricted stock editors could send a catalog price for a replacement SKU. | Keep the loaded draft and version together. Discard-and-reload requires confirmation. Warehouse users send null cost, and the server resolves the price by SKU. Verified with two live browser tabs and a warehouse login. |
+| A failed stock detail refetch could unmount an open editor and discard its unsaved fields. | Render the editor from its loaded draft when cached data exists. Chromium, Firefox and WebKit each interrupted a background GET, retained the note and saved it using the original rowversion. |
+| The API captured the approval threshold before the host applied its final configuration. | Resolve the policy from the built host and validate it on startup. An HTTP test configures a threshold, exercises its exact boundary and verifies an independent approval below it. |
+
+The server checks approver and amount grants under the document workflow. The audit-event timeline omits price snapshots. Full historical draft restoration remains outside this delivery. [Permission matrix](API_PERMISSION_MATRIX.md) · [Test evidence](TEST_REPORT.md)
+
 ## V2 milestone 1
 
 | Finding | Correction and regression |

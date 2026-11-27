@@ -4,7 +4,8 @@ public enum FailureKind
 {
     Invalid,
     Missing,
-    Conflict
+    Conflict,
+    Forbidden
 }
 
 public sealed class ErpException(FailureKind kind, string code, string message) : Exception(message)
@@ -17,4 +18,6 @@ public sealed class ErpException(FailureKind kind, string code, string message) 
     public static ErpException Missing(string code, string message) => new(FailureKind.Missing, code, message);
 
     public static ErpException Conflict(string code, string message) => new(FailureKind.Conflict, code, message);
+
+    public static ErpException Forbidden(string code, string message) => new(FailureKind.Forbidden, code, message);
 }

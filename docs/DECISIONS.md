@@ -19,8 +19,17 @@
 - Keep the development API executable in .work/api-run so the Windows process does not lock the MSBuild output. Stop only processes that match the MiniErp entry points.
 - Use moving average per warehouse and product, rounded to four decimal places. Capture issue cost in the ledger at posting and carry it into the destination for a transfer.
 - Reverse only a document that is still the latest movement across every affected position. Later corrections use a new adjustment. A count draft captures the balance versions at entry and requires a recount when stock changes.
-- The Inventory.Post grant permits creating, posting, cancelling and reversing warehouse documents. Inventory.View gates the document and balance reads.
+- The Inventory.Post grant permits creating, editing drafts, posting, cancelling and reversing warehouse documents. Inventory.View gates the document and balance reads.
 - Pin the Hook Form Zod adapter at 5.2.2 and regenerate the npm graph in an empty directory. The verified toolchain uses ESLint 10 and Node 24.
 - Purchase and sales share order and fulfillment tables. Kind-scoped policies separate their actions. A credit uses the original order, merchandise quantities and actual posted costing.
 - Use a dedicated demo warehouse and a development-only clock to create real historical movements through the same posting, settlement and validation code. Stable request keys and one seed marker protect repeat runs.
 - PDF output uses the browser print layout. Product workbooks are ordinary XLSX with bounded ZIP/XML validation. Scanner keyboards can enter the existing SKU search.
+
+## V2 draft and approval policy
+
+- Separate maker and approver using audit actor IDs: creator, latest editor and latest submitter cannot approve without `Orders.SelfApprove`. Unknown legacy creators conservatively require that override. Do not fabricate maker IDs during migration.
+- Configure an optional positive `Orders__ApprovalThresholdVnd`; rounded order totals at or above it require `Orders.ApproveAboveLimit` in addition to module approval. Leaving it unset disables the amount gate. Neither override is a default Manager grant.
+- Draft/returned orders can be edited, returned orders must change before resubmission, and rejected orders are terminal. Require reasons for rejection, revision and cancellation. Cancelling a partial order releases only remaining reservations and preserves shipped quantities and invoices.
+- Compare rowversions on draft writes. Preserve normalized original create fingerprints across edits, including legacy drafts. Exact transition retries compare the submitted version, actor and reason; avoid repeated audit or ledger effects. A draft PUT with an uncertain result requires reload rather than automatic content restoration.
+- Keep hidden stock costs server-owned during edit: retained products preserve omitted/null values; new restricted receipt products use their own current purchase-price snapshot. Explicit edit costs require valuation visibility. Receipt creation retains its existing explicit cost rule.
+- Require explicit fresh-count confirmation for every count edit. Read document headers, lines and history coherently, and isolate tracked write state after rollback. History exposes action/UTC actor/reason metadata; it does not retain old draft contents for restoration.

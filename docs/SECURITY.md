@@ -4,6 +4,8 @@ Server-side field permissions cover purchase price, COGS and margin across JSON 
 
 The commercial endpoints resolve the actual order kind in SQL before checking the module grant. Fulfillment and reversal also require Inventory.Post. Finance reads and postings have separate grants. Dashboard, search and work queues filter by current permissions. SQL integration cases exercise denial for anonymous, Viewer and management users.
 
+Order approval checks the creator, latest editor and submitter against the current approver inside the order transaction. Self-approval and approval at or above the configured VND threshold each require a separate grant. Warehouse edits preserve hidden costs on the server and reject explicit valuation changes by restricted users. [Approval and field permissions](API_PERMISSION_MATRIX.md)
+
 Workbook imports constrain the HTTP body, the expanded ZIP/XML and the row count. Parsed identifiers and decimal values use ordinary catalog validation and a transaction. Operational logs include route templates, response status, duration and correlation ID. Authenticated API responses use no-store. The access token, cookie value, form payloads and connection strings are excluded from request logs.
 
 Identity hashes passwords with its configured password hasher and temporarily locks an account after five failed attempts. Login is rate limited. The API uses a configured Base64 signing key of at least 32 bytes. Refresh credentials are random and stored as SHA-256 hashes. SQL rowversion makes a rotation single-use. Session validation rejects disabled, expired, rotated-out and revoked credentials as appropriate. The refresh cookie has HttpOnly and SameSite=Strict, and Secure in production. Origin and a custom header protect cookie operations.

@@ -76,9 +76,9 @@ public sealed class OrderDemoSeed(ErpDbContext db, TimeProvider clock)
                     partner, WarehouseId, "Lịch sử mô phỏng phân phối", [new(product.Id, quantity, purchase ? product.PurchasePrice : product.SalePrice)]);
                 var order = await orders.CreateAsync(input, Actor, ct);
                 if (order.Order.Status == OrderStatus.Draft)
-                    order = await orders.TransitionAsync(order.Order.Id, "submit", new(order.Order.Version), Actor, ct);
+                    order = await orders.TransitionAsync(order.Order.Id, "submit", new(order.Order.Version), Actor, ct, canSelfApprove: true, canApproveAboveLimit: true);
                 if (order.Order.Status == OrderStatus.PendingApproval)
-                    order = await orders.TransitionAsync(order.Order.Id, "approve", new(order.Order.Version), Actor, ct);
+                    order = await orders.TransitionAsync(order.Order.Id, "approve", new(order.Order.Version), Actor, ct, canSelfApprove: true, canApproveAboveLimit: true);
                 // Replaying any individual step uses its original request key after a process interruption.
                 if (batch % 5 == 0)
                     await orders.FulfillAsync(order.Order.Id, new(Key(batch, step, 1), false, [new(product.Id, 2)]), Actor, ct);

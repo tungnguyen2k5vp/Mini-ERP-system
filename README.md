@@ -6,6 +6,8 @@ Trace a purchase receipt or a sales shipment from its approved order through the
 
 ## Available workflows
 
+Purchase orders, sales orders and standalone stock drafts support version-checked edits. Reviewers can return an order for revision or reject it with a recorded reason. Document history identifies the actor for each step. Open orders past the promised date appear in the dashboard queue. [Workflow and approval rules](docs/BUSINESS_WORKFLOWS.md)
+
 V2 milestone 1 adds read-only stock and financial discrepancy reports, source-level sales cost snapshots and Vietnam business-day cutoffs. Open **Báo cáo tồn kho → Đối soát hiện tại** or **Công nợ & thanh toán → Đối soát** on the seeded preview. [V2 roadmap](docs/UPGRADE_V2_PLAN.md) · [Permissions](docs/API_PERMISSION_MATRIX.md)
 
 - Sign in, refresh a session, change a password and administer accounts, roles and permission grants.

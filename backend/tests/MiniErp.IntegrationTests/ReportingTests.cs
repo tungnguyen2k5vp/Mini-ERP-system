@@ -18,6 +18,7 @@ using MiniErp.Infrastructure.Finance;
 using MiniErp.Infrastructure.Inventory;
 using MiniErp.Infrastructure.Orders;
 using MiniErp.Infrastructure.Persistence;
+using MiniErp.Infrastructure.Reporting;
 
 namespace MiniErp.IntegrationTests;
 
@@ -69,13 +70,22 @@ public sealed class ReportingTests(ErpFixture fixture)
             await stock.PostAsync(draft.Document.Id,actor,ct);
         }
         await PostStock(StockKind.Receipt, null, new(whole,10,1), new(fraction,10,1));
+        var due = BusinessCalendar.DateAt(clock.Utc);
         var sale = await orders.CreateAsync(new(Guid.NewGuid(),OrderKind.Sales,customer.Id,origin.Id,null,
-            [new(whole,1,1),new(fraction,2,0.005m)]),actor,ct);
+            [new(whole,1,1),new(fraction,2,0.005m)], due),actor,ct);
         sale = await orders.TransitionAsync(sale.Order.Id,"submit",new(sale.Order.Version),actor,ct);
-        sale = await orders.TransitionAsync(sale.Order.Id,"approve",new(sale.Order.Version),actor,ct);
+        sale = await orders.TransitionAsync(sale.Order.Id,"approve",new(sale.Order.Version),actor,ct,canSelfApprove: true);
+        Assert.False(sale.Order.IsOverdue);
         await orders.FulfillAsync(sale.Order.Id,new(Guid.NewGuid(),false,[new(fraction,1)]),actor,ct);
         clock.Utc = start;
+        Assert.True((await orders.DetailAsync(sale.Order.Id, ct)).Order.IsOverdue);
+        var open = await orders.ListAsync(OrderKind.Sales, null, 1, 15, ct, onlyOverdue: true);
+        var queue = await new OperationsReport(db, clock).DashboardAsync(due, due,
+            new HashSet<string> { Permissions.ViewSales }, ct);
+        Assert.Equal(open.Total, Assert.Single(queue.Alerts, a => a.Href == "/ban-hang?overdue=true").Count);
+        Assert.DoesNotContain(queue.Alerts, a => a.Href.StartsWith("/mua-hang", StringComparison.Ordinal));
         await orders.FulfillAsync(sale.Order.Id,new(Guid.NewGuid(),false,[new(whole,1),new(fraction,1)]),actor,ct);
+        Assert.False((await orders.DetailAsync(sale.Order.Id, ct)).Order.IsOverdue);
         clock.Utc = until.AddTicks(-1);
         sale = await orders.FulfillAsync(sale.Order.Id,new(Guid.NewGuid(),true,[new(whole,1)]),actor,ct);
         await orders.ReverseAsync(sale.Order.Id, sale.Fulfillments.Single(f => f.IsReturn).Id, actor, ct);
@@ -172,6 +182,7 @@ public sealed class ReportingTests(ErpFixture fixture)
         Assert.DoesNotContain(dashboard!.Metrics,x=>new[]{"revenue","grossProfit","costOfGoods","receivable","payable","salesOrders","purchaseOrders"}.Contains(x.Key));
         Assert.Empty(dashboard.TopProducts); Assert.Empty(dashboard.ProfitTrend);
         Assert.DoesNotContain(dashboard.Alerts,x=>x.Label.Contains("phê duyệt",StringComparison.Ordinal));
+        Assert.DoesNotContain(dashboard.Alerts,x=>x.Href.Contains("overdue=true",StringComparison.Ordinal));
         var search=await viewer.GetFromJsonAsync<SearchHit[]>("/api/v1/search?q=Test");
         Assert.All(search!,x=>Assert.True(x.Kind is "product" or "stock" or "customer" or "supplier"));
         using var audit=await viewer.GetAsync("/api/v1/audit"); Assert.Equal(HttpStatusCode.Forbidden,audit.StatusCode);

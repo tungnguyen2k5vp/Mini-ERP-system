@@ -80,7 +80,7 @@ test('purchase partial receipt, payable allocation, return and refund through no
   page.once('dialog', (dialog) => void dialog.accept())
   await page.getByRole('button', { name: 'Ghi sổ trả hàng' }).click()
   await expect(
-    page.getByRole('list').filter({ has: page.getByText('Trả hàng', { exact: true }) }),
+    page.getByRole('list', { name: 'Lịch sử thực hiện' }).getByText('Trả hàng', { exact: true }),
   ).toBeVisible()
   await page.goto('/tai-chinh')
   await page.getByLabel('Loại công nợ').selectOption('2')

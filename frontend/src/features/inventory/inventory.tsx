@@ -1,3 +1,4 @@
+import { DocumentTimeline } from '../../components/document-workflow'
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { ArrowLeft, ArrowRight, Plus, Search, Printer } from 'lucide-react'
@@ -6,10 +7,11 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { DataTable } from '../../components/data-table'
 import { ErrorNotice, Loading } from '../../components/feedback'
 import { Button } from '../../components/ui/button'
-import { api, type Page, type Profile } from '../../lib/api'
+import { api, json, type Page, type Profile } from '../../lib/api'
 import { formatMoney, formatQuantity } from '../../lib/labels'
 import { queryClient } from '../../lib/query'
 import { useDebouncedValue } from '../../lib/use-debounced-value'
+import { StockForm } from './stock-form'
 import { useLookupOptions } from '../catalog/listing'
 
 const root = '/inventory'
@@ -24,10 +26,10 @@ type Balance = { warehouseId: string; warehouseName: string; productId: string; 
 type Movement = { id: number; documentId: number; documentNumber: string; warehouseId: string;
   warehouseName: string; productId: string; sku: string; quantityDelta: number; unitCost: number | null;
   balanceAfter: number; postedAt: string }
-export type StockDocument = { id: number; number: string; kind: number; status: number; warehouseId: string;
+export type StockDocument = { version: string; id: number; number: string; kind: number; status: number; warehouseId: string;
   warehouseName: string; destinationName: string | null; createdAt: string; postedAt: string | null; reversesId: number | null }
 type StockLine = { productId: string; sku: string; productName: string; quantity: number; unitCost: number | null }
-export type StockDetail = { document: StockDocument; note: string | null; destinationId: string | null; lines: StockLine[] }
+export type StockDetail = { history?: { action: string; atUtc: string; actorName: string; reason: string | null }[]; document: StockDocument; note: string | null; destinationId: string | null; lines: StockLine[] }
 
 function warehouseQuery(warehouse: string, page: number) {
   const params = new URLSearchParams({ page: String(page), pageSize: '15' })
@@ -196,21 +198,33 @@ const actions = {
 
 export function StockDocumentPage({ profile }: { profile: Profile }) {
   const { id } = useParams()
+  return <StockDocumentContent key={id} profile={profile} />
+}
+
+function StockDocumentContent({ profile }: { profile: Profile }) {
+  const { id } = useParams()
   const navigate = useNavigate()
+  const [editing, setEditing] = useState<StockDetail | null>(null)
+  const [reason, setReason] = useState('')
+  const [cancelling, setCancelling] = useState(false)
+  const [cancelVersion, setCancelVersion] = useState('')
   const query = useQuery({
     queryKey: ['inventory', 'document', id],
     queryFn: ({ signal }) => api<StockDetail>(root + '/documents/' + id, { signal }),
   })
   const mutation = useMutation({
-    mutationFn: (action: keyof typeof actions) => api<StockDetail>(root + '/documents/' + id + '/' + action, { method: 'POST' }),
+    mutationFn: (action: keyof typeof actions) => api<StockDetail>(root + '/documents/' + id + '/' + action, json('POST', { version: action === 'cancel' ? cancelVersion : query.data?.document.version, ...(action === 'cancel' ? { reason: reason.trim() } : {}) })),
     onSuccess: result => {
+      setCancelling(false)
+      setReason('')
       void queryClient.invalidateQueries({ queryKey: ['inventory'] })
       queryClient.setQueryData(['inventory', 'document', String(result.document.id)], result)
       if (String(result.document.id) !== id) void navigate(docPath + '/' + result.document.id)
     },
   })
   if (query.isPending) return <Loading />
-  if (query.isError) return <ErrorNotice error={query.error} />
+  if (!query.data) return <ErrorNotice error={query.error} />
+  if (editing) return <StockForm key={editing.document.id} initial={editing} onSaved={() => setEditing(null)} canEditCost={profile.permissions.includes('Reports.Sensitive')} onReload={() => { void query.refetch().then(result => { if (result.isSuccess) setEditing(null) }) }} />
   const { document, lines, note } = query.data
   const available: (keyof typeof actions)[] = document.status === 1 ? ['cancel', 'post'] :
     document.status === 2 && document.kind !== 6 ? ['reverse'] : []
@@ -220,13 +234,29 @@ export function StockDocumentPage({ profile }: { profile: Profile }) {
     <header className="page-heading">
       <div><h1>{document.number}</h1><div className="flex items-center gap-2 mt-2">{kindLabels[document.kind]} {statusBadge(document.status)}</div></div>
       <div className="action-row"><Button variant="outline" onClick={() => window.print()}><Printer size={16} /> In chứng từ</Button>{profile.permissions.includes('Inventory.Post') && <div className="form-actions">
+        {document.status === 1 && <Button variant="outline" onClick={() => setEditing(query.data)}>Sửa phiếu nháp</Button>}
         {available.map(action => <Button
           key={action} variant={action === 'post' ? 'primary' : 'outline'} disabled={mutation.isPending} onClick={() => {
-            if (window.confirm(actions[action].prompt)) mutation.mutate(action)
+            if (action === 'cancel') { setReason(''); setCancelVersion(document.version); setCancelling(true) }
+            else if (window.confirm(actions[action].prompt)) mutation.mutate(action)
           }}>{actions[action].label}</Button>)}
       </div>}</div>
     </header>
     <ErrorNotice error={mutation.error} />
+    {mutation.error && <Button variant="outline" onClick={() => { mutation.reset(); void query.refetch() }}>Tải lại chứng từ</Button>}
+    {cancelling && <form className="panel form-stack" onSubmit={e => {
+      e.preventDefault()
+      if (reason.trim() && window.confirm(actions.cancel.prompt)) mutation.mutate('cancel')
+    }}>
+      <div className="field">
+        <label htmlFor="stock-cancel-reason">Lý do hủy phiếu</label>
+        <textarea id="stock-cancel-reason" maxLength={300} required value={reason} onChange={e => setReason(e.target.value)} />
+      </div>
+      <div className="form-actions">
+        <Button disabled={mutation.isPending || !reason.trim()}>Xác nhận hủy</Button>
+        <Button type="button" variant="outline" onClick={() => setCancelling(false)}>Đóng</Button>
+      </div>
+    </form>}
     <section className="panel record-panel document-summary">
       <h2>Thông tin chứng từ</h2>
       <dl className="key-values">
@@ -249,5 +279,6 @@ export function StockDocumentPage({ profile }: { profile: Profile }) {
         </tr>)}</tbody>
       </table>
     </div>
+    <DocumentTimeline title="Lịch sử chứng từ" history={query.data.history} />
   </>
 }

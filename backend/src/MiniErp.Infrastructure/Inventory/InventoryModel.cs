@@ -36,6 +36,8 @@ internal static class InventoryModel
             doc.HasIndex(x => x.ReversesId).IsUnique();
             doc.HasIndex(x => new { x.Kind, x.Id }).IsDescending(false, true);
             doc.Property(x => x.Note).HasMaxLength(300);
+            doc.Property(x => x.CreatePayloadHash).HasMaxLength(64).IsUnicode(false);
+            doc.Property(x => x.IsEdited).HasDefaultValue(false);
             doc.Property(x => x.Version).IsRowVersion();
             doc.HasOne(x => x.Warehouse).WithMany().HasForeignKey(x => new { Kind = x.WarehouseKind, Id = x.WarehouseId })
                 .HasPrincipalKey(x => new { x.Kind, x.Id }).OnDelete(DeleteBehavior.Restrict);

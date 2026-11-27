@@ -1,8 +1,8 @@
 # Project status
 
-V2 milestone 1 implements current stock diagnostics, source-level finance exceptions, line-level COGS for new sales, price permissions and UTC+07:00 report cutoffs. Order and payment correction workflows are scheduled in the following P0 milestones. [V2 scope and acceptance](UPGRADE_V2_PLAN.md)
+V2 milestones 1 and 2 cover reconciliation, line-level sales costs, Vietnam business-day cutoffs, versioned document edits, resubmission, rejection reasons, approval permissions and late-order alerts. Credit exposure and payment correction are the next P0 deliverables. [V2 scope and acceptance](UPGRADE_V2_PLAN.md)
 
-Updated 2026-11-26. [Test evidence](TEST_REPORT.md) · [Handover](HANDOVER.md) · [Open checks](NEXT_STEPS.md)
+Updated 2026-11-27. [Test evidence](TEST_REPORT.md) · [Handover](HANDOVER.md) · [Open checks](NEXT_STEPS.md)
 
 | Milestone | Implemented and checked |
 | --- | --- |

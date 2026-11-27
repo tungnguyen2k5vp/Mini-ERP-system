@@ -79,7 +79,7 @@ public sealed class InventoryReport(ErpDbContext db)
               OR COALESCE(a.Fulfilled,0)<0 OR COALESCE(a.Fulfilled,0)>l.Quantity
               OR COALESCE(a.Returned,0)<0 OR COALESCE(a.Returned,0)>COALESCE(a.Fulfilled,0)
               OR l.ReservedQuantity<>CASE WHEN o.Kind=2 AND o.Status IN (3,4) AND l.Quantity>COALESCE(a.Fulfilled,0) THEN l.Quantity-COALESCE(a.Fulfilled,0) ELSE 0 END
-              OR (o.Status IN (1,2,3) AND state.AnyFulfilled=1)
+              OR (o.Status IN (1,2,3,7,8) AND state.AnyFulfilled=1)
               OR (o.Status=4 AND (state.AnyFulfilled=0 OR state.AllFulfilled=1))
               OR (o.Status=5 AND state.AllFulfilled=0)
               THEN 1 ELSE 0 END Inconsistent

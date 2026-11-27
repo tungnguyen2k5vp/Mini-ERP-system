@@ -24,7 +24,9 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
 
     public async Task<StockDocumentResponse> DetailAsync(int id, CancellationToken ct)
     {
-        var row = await db.StockDocuments.Where(x => x.Id == id).Select(RowProjection).SingleOrDefaultAsync(ct)
+        await using var transaction = await db.BeginDocumentReadAsync(ct);
+        var row = await db.StockDocuments.FromSqlInterpolated($"SELECT * FROM inventory.Documents WITH (HOLDLOCK) WHERE Id={id}")
+            .AsNoTracking().Select(RowProjection).SingleOrDefaultAsync(ct)
             ?? throw ErpException.Missing("stock_document_missing", "Không tìm thấy chứng từ kho.");
         var detail = await db.StockDocuments.AsNoTracking().Where(x => x.Id == id).Select(x => new
         {
@@ -33,24 +35,24 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
             Lines = x.Lines.OrderBy(l => l.Sku).Select(l =>
                 new StockLineResponse(l.ProductId, l.Sku, l.ProductName, l.Quantity, l.UnitCost)).ToArray()
         }).SingleAsync(ct);
-        return new StockDocumentResponse(row, detail.Note, detail.DestinationId, detail.Lines);
+        var result = new StockDocumentResponse(row, detail.Note, detail.DestinationId, detail.Lines,
+            await db.DocumentHistoryAsync("StockDocument", id, ct));
+        if (transaction is not null) await transaction.CommitAsync(ct);
+        return result;
     }
 
     public async Task<StockDocumentResponse> CreateAsync(StockDocumentInput input, RequestActor actor, CancellationToken ct)
     {
         Validate(input);
         var note = CatalogRules.OptionalText(input.Note);
+        await using var transaction = await db.BeginDocumentWriteAsync(ct);
+        await db.LockDocumentRequestAsync("stock-create-" + input.RequestId, ct);
         var previous = await db.StockDocuments.AsNoTracking().Include(x => x.Lines)
             .SingleOrDefaultAsync(x => x.RequestId == input.RequestId, ct);
         if (previous is not null)
         {
-            if (previous.Kind != input.Kind || previous.WarehouseId != input.WarehouseId ||
-                previous.DestinationId != input.DestinationId || previous.Note != note || previous.Lines.Count != input.Lines.Length ||
-                !input.Lines.All(line => previous.Lines.Any(x => x.ProductId == line.ProductId &&
-                    x.Quantity == line.Quantity && x.UnitCost == line.UnitCost)))
-            {
+            if ((previous.CreatePayloadHash ?? Fingerprint(previous)) != Fingerprint(input))
                 throw ErpException.Conflict("request_id_conflict", "Mã yêu cầu đã được dùng cho chứng từ khác.");
-            }
             return await DetailAsync(previous.Id, ct);
         }
 
@@ -78,23 +80,38 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
                 CountVersion = countVersions.GetValueOrDefault(line.ProductId)
             }).ToList()
         };
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        doc.FreezeCreatePayload(Fingerprint(input));
         db.StockDocuments.Add(doc);
         await db.SaveChangesAsync(ct);
         Audit(doc, actor, "CreateStockDocument");
         await db.SaveChangesAsync(ct);
+        var detail = await DetailAsync(doc.Id, ct);
         await transaction.CommitAsync(ct);
-        return await DetailAsync(doc.Id, ct);
+        return detail;
     }
 
-    public async Task<StockDocumentResponse> PostAsync(int id, RequestActor actor, CancellationToken ct, bool linked = false)
+    public async Task<StockDocumentResponse> PostAsync(int id, RequestActor actor, CancellationToken ct, bool linked = false, byte[]? version = null)
     {
-        await using var transaction = linked ? null : await db.Database.BeginTransactionAsync(ct);
+        await using var transaction = linked ? null : await db.BeginDocumentWriteAsync(ct);
         var doc = await LoadAsync(id, ct);
-        if (doc.Status == StockStatus.Posted)
+        if (!linked && doc.Status == StockStatus.Posted && version is { Length: 8 })
         {
-            return await DetailAsync(id, ct);
+            var token = Convert.ToBase64String(version);
+            var originalToken = await db.AuditEntries.Where(x => x.Entity == "StockDocument" &&
+                    x.EntityId == id.ToString() && x.Action == "PostStockDocument" &&
+                    x.UserId == actor.UserId && x.Result == "Succeeded")
+                .Select(x => x.InputVersion).SingleOrDefaultAsync(ct);
+            if (originalToken == token)
+                return await DetailAsync(id, ct);
+            throw ErpException.Conflict("post_replay_conflict", "Yêu cầu ghi sổ khác với lần ghi sổ trước.");
         }
+        if (!linked)
+        {
+            if (version is not null) RequireVersion(doc, version);
+            else if (doc.IsEdited) throw ErpException.Conflict("version_required", "Phiếu đã sửa cần phiên bản trước khi ghi sổ.");
+        }
+        if (doc.Status == StockStatus.Posted)
+            return await DetailAsync(id, ct);
         var stamp = clock.GetUtcNow().UtcDateTime;
         doc.Post(stamp);
         var productIds = doc.Lines.Select(x => x.ProductId).ToArray();
@@ -123,25 +140,103 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
             }
         }
 
-        Audit(doc, actor, "PostStockDocument");
+        Audit(doc, actor, "PostStockDocument", version is null ? null : Convert.ToBase64String(version));
         await db.SaveChangesAsync(ct);
+        var detail = await DetailAsync(id, ct);
         if (transaction is not null) await transaction.CommitAsync(ct);
-        return await DetailAsync(id, ct);
+        return detail;
     }
 
-    public async Task<StockDocumentResponse> CancelAsync(int id, RequestActor actor, CancellationToken ct)
+    public async Task<StockDocumentResponse> EditAsync(int id, StockDocumentEditInput input,
+        RequestActor actor, bool canSetCost, CancellationToken ct)
     {
+        await using var transaction = await db.BeginDocumentWriteAsync(ct);
         var doc = await LoadAsync(id, ct);
-        if (doc.Status == StockStatus.Cancelled) return await DetailAsync(id, ct);
-        doc.Cancel();
-        Audit(doc, actor, "CancelStockDocument");
+        RequireVersion(doc, input.Version);
+        if (doc.Status != StockStatus.Draft)
+            throw ErpException.Conflict("invalid_status", "Chỉ được sửa phiếu nháp.");
+        if (doc.Kind == StockKind.Count && !input.Recount)
+            throw ErpException.Conflict("recount_required", "Hãy kiểm kê lại và xác nhận số đếm mới trước khi sửa.");
+        if (input.Lines is not { Length: >= 1 and <= 50 } || input.Lines.Any(x => x is null))
+            throw ErpException.Invalid("invalid_document", "Chọn từ 1 đến 50 dòng sản phẩm.");
+        if (!canSetCost && input.Lines.Any(x => x.UnitCost is not null))
+            throw ErpException.Forbidden("financial_fields_forbidden", "Bạn không có quyền sửa giá vốn.");
+        var ids = input.Lines.Select(x => x.ProductId).ToArray();
+        var (products, _) = await ActiveRecordsAsync(input.WarehouseId, input.DestinationId, ids, ct);
+        var lines = input.Lines.Select(x => x with
+        {
+            UnitCost = x.UnitCost ?? doc.Lines.FirstOrDefault(l => l.ProductId == x.ProductId)?.UnitCost
+                ?? (doc.Kind == StockKind.Receipt && !canSetCost ? products[x.ProductId].PurchasePrice : null)
+        }).ToArray();
+        Validate(new StockDocumentInput(doc.RequestId, doc.Kind, input.WarehouseId, input.DestinationId, input.Note, lines));
+        var counts = doc.Kind == StockKind.Count
+            ? await db.StockBalances.Where(x => x.WarehouseId == input.WarehouseId && ids.Contains(x.ProductId))
+                .ToDictionaryAsync(x => x.ProductId, x => x.Version, ct) : [];
+        doc.FreezeCreatePayload(Fingerprint(doc));
+        doc.Edit(input.WarehouseId, input.DestinationId, CatalogRules.OptionalText(input.Note));
+        db.Entry(doc).Property(x => x.IsEdited).IsModified = true;
+        // Delete first inside the transaction: retained SKUs share the composite key.
+        db.Set<StockLine>().RemoveRange(doc.Lines);
         await db.SaveChangesAsync(ct);
-        return await DetailAsync(id, ct);
+        doc.Lines.Clear();
+        doc.Lines.AddRange(lines.Select(x => new StockLine
+        {
+            ProductId = x.ProductId, Quantity = x.Quantity, UnitCost = x.UnitCost,
+            Sku = products[x.ProductId].Sku, ProductName = products[x.ProductId].Name,
+            CountVersion = counts.GetValueOrDefault(x.ProductId)
+        }));
+        Audit(doc, actor, "EditStockDocument", Convert.ToBase64String(input.Version));
+        await db.SaveChangesAsync(ct);
+        var detail = await DetailAsync(id, ct);
+        await transaction.CommitAsync(ct);
+        return detail;
     }
+
+    public async Task<StockDocumentResponse> CancelAsync(int id, StockCancelInput input, RequestActor actor, CancellationToken ct)
+    {
+        var reason = CatalogRules.OptionalText(input.Reason);
+        if (reason is null || reason.Length > 300 || input.Version is not { Length: 8 })
+            throw ErpException.Invalid("invalid_cancellation", "Nhập phiên bản và lý do hủy tối đa 300 ký tự.");
+        await using var transaction = await db.BeginDocumentWriteAsync(ct);
+        var doc = await LoadAsync(id, ct);
+        if (doc.Status == StockStatus.Cancelled)
+        {
+            var prior = await db.AuditEntries.AsNoTracking().Where(x => x.Entity == "StockDocument" &&
+                x.EntityId == id.ToString() && x.Action == "CancelStockDocument").OrderByDescending(x => x.Id).FirstOrDefaultAsync(ct);
+            if (prior?.Reason != reason || prior.InputVersion != Convert.ToBase64String(input.Version) || prior.UserId != actor.UserId)
+                throw ErpException.Conflict("cancellation_conflict", "Yêu cầu hủy khác với lần hủy trước.");
+            return await DetailAsync(id, ct);
+        }
+        RequireVersion(doc, input.Version);
+        doc.Cancel();
+        db.AuditEntries.Add(AuditEntry.Create(actor, clock.GetUtcNow().UtcDateTime, "CancelStockDocument",
+            "StockDocument", id.ToString(), after: doc.Status.ToString(), reason: reason, inputVersion: Convert.ToBase64String(input.Version)));
+        await db.SaveChangesAsync(ct);
+        var detail = await DetailAsync(id, ct);
+        await transaction.CommitAsync(ct);
+        return detail;
+    }
+
+    private static void RequireVersion(StockDocument doc, byte[]? version)
+    {
+        if (version is not { Length: 8 }) throw ErpException.Invalid("invalid_version", "Phiên bản không hợp lệ.");
+        if (!doc.Version.AsSpan().SequenceEqual(version))
+            throw ErpException.Conflict("stale_document", "Phiếu đã thay đổi. Hãy tải lại.");
+    }
+
+    private static string Fingerprint(StockDocument doc) => Fingerprint(new StockDocumentInput(doc.RequestId,
+        doc.Kind, doc.WarehouseId, doc.DestinationId, doc.Note,
+        doc.Lines.Select(x => new StockLineInput(x.ProductId, x.Quantity, x.UnitCost)).ToArray()));
+
+    private static string Fingerprint(StockDocumentInput input) => DocumentFingerprint.Compute(new
+    {
+        input.Kind, input.WarehouseId, input.DestinationId, Note = CatalogRules.OptionalText(input.Note),
+        Lines = input.Lines.OrderBy(x => x.ProductId).Select(x => new { x.ProductId, x.Quantity, x.UnitCost }).ToArray()
+    });
 
     public async Task<StockDocumentResponse> ReverseAsync(int id, RequestActor actor, CancellationToken ct, bool linked = false)
     {
-        await using var transaction = linked ? null : await db.Database.BeginTransactionAsync(ct);
+        await using var transaction = linked ? null : await db.BeginDocumentWriteAsync(ct);
         var original = await LoadAsync(id, ct);
         // Read the source first: an in-flight order posting may not have inserted its source link yet.
         if (!linked && await db.OrderFulfillments.AnyAsync(x => x.StockDocumentId == id, ct))
@@ -197,8 +292,9 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
         }
         Audit(original, actor, "ReverseStockDocument");
         await db.SaveChangesAsync(ct);
+        var detail = await DetailAsync(reversal.Id, ct);
         if (transaction is not null) await transaction.CommitAsync(ct);
-        return await DetailAsync(reversal.Id, ct);
+        return detail;
     }
 
     public async Task<Page<StockMovementRow>> HistoryAsync(Guid? warehouseId, Guid? productId, int page, int size, CancellationToken ct)
@@ -280,14 +376,15 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
             PostedAtUtc = stamp
         });
 
-    private void Audit(StockDocument doc, RequestActor actor, string action) =>
+    private void Audit(StockDocument doc, RequestActor actor, string action, string? inputVersion = null) =>
         db.AuditEntries.Add(AuditEntry.Create(actor, clock.GetUtcNow().UtcDateTime, action,
-            "StockDocument", doc.Id.ToString(), after: doc.Status.ToString()));
+            "StockDocument", doc.Id.ToString(), after: doc.Status.ToString(), inputVersion: inputVersion));
 
     private static void Validate(StockDocumentInput input)
     {
         if (input.RequestId == Guid.Empty || input.WarehouseId == Guid.Empty ||
-            input.Lines is not { Length: >= 1 and <= 50 } || input.Lines.Any(x => x is null || x.ProductId == Guid.Empty))
+            input.Note?.Length > 300 || input.Lines is not { Length: >= 1 and <= 50 } ||
+            input.Lines.Any(x => x is null || x.ProductId == Guid.Empty))
         {
             throw ErpException.Invalid("invalid_document", "Chọn kho và từ 1 đến 50 dòng sản phẩm.");
         }
@@ -342,5 +439,5 @@ public sealed class StockService(ErpDbContext db, TimeProvider clock)
         new StockDocumentRow(row.Id, DocumentNumber(row.Kind, row.Id), row.Kind, row.Status,
             row.WarehouseId, row.Warehouse.Name, row.Destination == null ? null : row.Destination.Name,
             new DateTimeOffset(row.CreatedAtUtc, TimeSpan.Zero),
-            row.PostedAtUtc == null ? null : new DateTimeOffset(row.PostedAtUtc.Value, TimeSpan.Zero), row.ReversesId);
+            row.PostedAtUtc == null ? null : new DateTimeOffset(row.PostedAtUtc.Value, TimeSpan.Zero), row.ReversesId, row.Version);
 }

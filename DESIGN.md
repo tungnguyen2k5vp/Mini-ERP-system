@@ -6,4 +6,6 @@ The sign-in screen uses the product wordmark and an offset color field for orien
 
 Use the same shared controls for forms, validation, status and paging. Show a language-specific action during failures and expose the correlation ID for server errors.
 
+Keep the draft's loaded version and the user's entries together during background refreshes. A version conflict offers an explicit discard-and-reload action. Show the decision and its reason near the document header, with the actor and time for each action in a chronological list.
+
 Use a dated report for historical stock and a separate current reconciliation view for live reservations. Show the cutoff beside financial exceptions and link permitted source documents. Display a dash for restricted monetary fields in screen and print layouts. Use counts of documents or SKUs for cross-unit operational metrics.

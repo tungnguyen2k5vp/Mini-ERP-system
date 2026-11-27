@@ -12,7 +12,7 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'], channel: process.env.CI ? undefined : 'chrome' } },
     {
-      name: 'firefox', testMatch: '**/p0-reconciliation.spec.ts',
+      name: 'firefox', testMatch: ['**/p0-reconciliation.spec.ts', '**/document-workflow.spec.ts'],
       use: {
         ...devices['Desktop Firefox'],
         // Native GPU composition crashes this Firefox build during axe contrast checks on Windows.
@@ -21,6 +21,6 @@ export default defineConfig({
         } } : {},
       },
     },
-    { name: 'webkit', testMatch: '**/p0-reconciliation.spec.ts', use: devices['Desktop Safari'] },
+    { name: 'webkit', testMatch: ['**/p0-reconciliation.spec.ts', '**/document-workflow.spec.ts'], use: devices['Desktop Safari'] },
   ],
 })

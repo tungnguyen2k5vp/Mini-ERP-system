@@ -14,6 +14,7 @@ internal sealed class ApiErrors(ILogger<ApiErrors> logger) : IExceptionHandler
             ErpException e => (e.Kind switch
             {
                 FailureKind.Invalid => 400,
+                FailureKind.Forbidden => 403,
                 FailureKind.Missing => 404,
                 _ => 409
             }, e.Code, "Không thể thực hiện yêu cầu.", e.Message),
@@ -44,7 +45,7 @@ internal sealed class ApiErrors(ILogger<ApiErrors> logger) : IExceptionHandler
     {
         while (error is not null)
         {
-            if (error is SqlException { Number: 1205 or -2 }) return true;
+            if (error is SqlException { Number: 1205 or -2 or 51001 }) return true;
             error = error.InnerException;
         }
         return false;

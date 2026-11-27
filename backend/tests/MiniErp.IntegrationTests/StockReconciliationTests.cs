@@ -51,11 +51,18 @@ public sealed class StockReconciliationTests(ErpFixture fixture)
         {
             var db = scope.ServiceProvider.GetRequiredService<ErpDbContext>();
             await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+            var report = scope.ServiceProvider.GetRequiredService<InventoryReport>();
+            foreach (var status in new[] { OrderStatus.Rejected, OrderStatus.ReturnedForRevision })
+            {
+                await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE orders.Orders SET Status={(byte)status} WHERE Id={data.CancelledOrder}");
+                var impossible = await report.ReconciliationAsync(data.Warehouse, data.Product, 1, 20, CancellationToken.None);
+                Assert.Equal(1, Assert.Single(impossible.Items).InconsistentOrderLines);
+            }
+            await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE orders.Orders SET Status={(byte)OrderStatus.Cancelled} WHERE Id={data.CancelledOrder}");
             await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE inventory.Balances SET OnHand=OnHand+1 WHERE WarehouseId={data.Warehouse} AND ProductId={data.Product}");
             await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE orders.OrderLines SET ReservedQuantity=ReservedQuantity+1 WHERE OrderId={data.CancelledOrder} AND ProductId={data.Product}");
             await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE orders.OrderLines SET ReservedQuantity=ReservedQuantity-1 WHERE OrderId={data.SecondOpenOrder} AND ProductId={data.Product}");
             await db.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM inventory.Balances WHERE WarehouseId={data.Warehouse} AND ProductId={data.SecondProduct}");
-            var report = scope.ServiceProvider.GetRequiredService<InventoryReport>();
             var first = await report.ReconciliationAsync(data.Warehouse, null, 1, 1, CancellationToken.None);
             var second = await report.ReconciliationAsync(data.Warehouse, null, 2, 1, CancellationToken.None);
             Assert.Equal(2, first.Total); Assert.Equal(2, second.Total);
@@ -108,7 +115,7 @@ public sealed class StockReconciliationTests(ErpFixture fixture)
         cancelled = await Post<OrderDetail>($"orders/{cancelled.Order.Id}/fulfill", new FulfillmentInput(Guid.NewGuid(), true, [new(first.Id, 1)]));
         var returned = cancelled.Fulfillments.Single(x => x.IsReturn);
         cancelled = await Post<OrderDetail>($"orders/{cancelled.Order.Id}/fulfillments/{returned.Id}/reverse", new { });
-        cancelled = await Post<OrderDetail>($"orders/{cancelled.Order.Id}/cancel", new OrderVersion(cancelled.Order.Version));
+        cancelled = await Post<OrderDetail>($"orders/{cancelled.Order.Id}/cancel", new OrderVersion(cancelled.Order.Version, "Khách hủy phần chưa giao"));
         var a = await Order(OrderKind.Sales, new OrderLineInput(first.Id, 4, 20), new OrderLineInput(second.Id, 1, 20));
         var b = await Order(OrderKind.Sales, new OrderLineInput(first.Id, 4, 20));
         return new(warehouse.Id, first.Id, second.Id, a.Order.Id, b.Order.Id, cancelled.Order.Id);

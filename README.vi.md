@@ -6,7 +6,7 @@ V2 bổ sung đối soát theo từng vị trí kho và chứng từ tài chính
 
 ![Tổng quan hoạt động từ cơ sở dữ liệu thật](docs/screenshots/v2-p0-dashboard-1280.png)
 
-**Thử luồng nghiệp vụ** trong mục Đơn mua hoặc Đơn bán. Chọn đối tác, gửi duyệt và nhập hoặc giao một phần. Từ dòng thực hiện, mở phiếu kho, kiểm tra công nợ và ghi thanh toán. Có thể tra cứu sản phẩm bằng SKU, nhập và xuất danh mục Excel, rồi dùng chức năng in của trình duyệt để lưu PDF.
+**Thử luồng duyệt** trong mục Đơn mua hoặc Đơn bán. Nhập ngày giao/nhận dự kiến, gửi duyệt, rồi dùng tài khoản quản lý khác để yêu cầu sửa. Sửa đơn nháp, gửi lại và xem lý do cùng người xử lý trong lịch sử. Khi đơn đã duyệt, có thể giao hoặc nhận từng phần và theo dõi công nợ từ chứng từ nguồn. [Quy trình và quyền duyệt](docs/BUSINESS_WORKFLOWS.md)
 
 Trong D:/ReactJS/MiniErp, chạy:
 

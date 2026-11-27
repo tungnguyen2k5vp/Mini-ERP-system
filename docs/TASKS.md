@@ -1,5 +1,8 @@
 # Tasks
 
+- [x] V2 draft edits, return for revision, resubmission, controlled approval, terminal rejection, cancellation reasons and late-order queues. [Workflow matrix](BUSINESS_WORKFLOWS.md)
+- [ ] V2 customer credit exposure and correction of posted cash entries. [Acceptance criteria](UPGRADE_V2_PLAN.md)
+
 - [x] Inspect the existing solution, handover and project instructions. Outline acceptance gates in [implementation plan](IMPLEMENTATION_PLAN.md).
 - [x] Clean npm and locked NuGet installs. Dependency advisory checks and existing regression suite.
 - [x] Purchase and sales orders, approvals, partial receipts/shipments, reservations, cancellation, linked returns and reversals.

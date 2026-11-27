@@ -9,11 +9,12 @@ internal static class OrderModel
     {
         model.Entity<TradeOrder>(b =>
         {
-            b.ToTable("Orders", "orders", t => t.HasCheckConstraint("CK_Orders_State", "[Kind] IN (1,2) AND [Status] BETWEEN 1 AND 6 AND [WarehouseKind] = 3"));
+            b.ToTable("Orders", "orders", t => t.HasCheckConstraint("CK_Orders_State", "[Kind] IN (1,2) AND [Status] BETWEEN 1 AND 8 AND [WarehouseKind] = 3"));
             b.HasIndex(x => x.RequestId).IsUnique();
             b.HasIndex(x => new { x.Kind, x.PartnerId, x.Id });
             b.Property(x => x.Version).IsRowVersion();
             b.Property(x => x.Note).HasMaxLength(300);
+            b.Property(x => x.CreatePayloadHash).HasMaxLength(64).IsUnicode(false);
             b.HasOne(x => x.Partner).WithMany().HasForeignKey(x => x.PartnerId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne(x => x.Warehouse).WithMany().HasForeignKey(x => new { Kind = x.WarehouseKind, Id = x.WarehouseId })
                 .HasPrincipalKey(x => new { x.Kind, x.Id }).OnDelete(DeleteBehavior.Restrict);

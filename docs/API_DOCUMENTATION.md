@@ -33,16 +33,17 @@ See [HTTP requests](../backend/MiniErp.http).
 
 | Relative route | Contract and authorization |
 | --- | --- |
-| GET /orders and /orders/options | `kind=1` for purchase, `kind=2` for sales. Lists accept partner, status, search, sort and pagination. Options belong to the selected module. |
-| POST /orders | Create a draft with a UUID requestId, kind, partnerId, warehouseId and lines containing productId, quantity and unitPrice. Requires the corresponding Create grant. |
-| GET /orders/{id} | Reads the actual order kind and enforces its View policy. Returns the version, lines and linked fulfillment records. |
-| POST /orders/{id}/submit, /approve, /cancel | Body contains the latest version. Approval reserves sales quantities. Cancellation releases the unshipped remainder. |
+| GET /orders and /orders/options | `kind=1` for purchase, `kind=2` for sales. Lists accept partner, status, search, sort, pagination and `onlyOverdue=true` (approved/partial orders whose expected date precedes today in Vietnam). Options belong to the selected module. |
+| POST /orders | Create a draft with a UUID requestId, kind, partnerId, warehouseId, optional expectedDate (`YYYY-MM-DD`) and lines containing productId, quantity and unitPrice. Requires the corresponding Create grant. |
+| GET /orders/{id} | Reads the actual order kind and enforces its View policy. Returns the version, expectedDate/isOverdue, lines, linked fulfillments, history and canApprove. |
+| PUT /orders/{id} | Body: version, partnerId, warehouseId, note, expectedDate, lines. Kind is immutable. Only draft/returned-for-revision orders can be edited; a real edit returns the order to draft. |
+| POST /orders/{id}/submit, /approve, /cancel, /reject, /return-for-revision | Body: version and optional reason. Cancel/reject/return-for-revision require a nonblank reason (maximum 300 characters). Approval reserves sales quantities; cancellation releases the unshipped remainder without undoing existing fulfillment/invoices. |
 | POST /orders/{id}/fulfill | Send requestId, isReturn and product/quantity lines. Requires the order module's View and Inventory.Post. Returns linked stock and invoicing results through the detail APIs. |
 | POST /orders/{id}/fulfillments/{fulfillmentId}/reverse | Links the inverse operation to the source. A newer position movement can prevent reversal. |
 | GET /finance/invoices, /finance/payments, /finance/options | Finance.View. Filter by partner/direction. Use invoiceId to follow an exact invoice. |
 | POST /finance/payments | Finance.Post plus Finance.View. Send requestId, partnerId, direction, isRefund, paymentMethodId, amount and an array of invoiceId/amount allocations. |
 | GET /finance/aging and /finance/reconciliation | Historical asOf is an ISO timestamp with UTC Z. Receivable direction is 1, payable is 2. |
-| GET /reports/dashboard and /reports/stock | Date filters from/to are inclusive UTC calendar dates. Metric visibility follows current permissions. Stock reports reconstruct opening, inflow, outflow and closing and accept warehouseId and filter (all, low, slow). |
+| GET /reports/dashboard and /reports/stock | Date filters from/to are inclusive Vietnam calendar dates. Metric visibility follows current permissions. Stock reports reconstruct opening, inflow, outflow and closing and accept warehouseId and filter (all, low, slow). |
 | GET /search and /audit | Search only returns accessible records. Audit requires System.Audit and supports date filtering and pagination. |
 | GET or POST /catalog/products/workbook | Download an XLSX with Export, or upload multipart field file with Create. Both require Catalog.View. The import creates a whole batch or returns a validation error. |
 
@@ -59,10 +60,23 @@ Use GET and POST on /products, /categories, /units, /warehouses, /payment-method
 | GET /inventory/balances | Paged report with warehouseId, productId, search and lowOnly filters. |
 | GET /inventory/history | Paged posted movements with warehouseId or productId filters. |
 | GET /inventory/documents | Paged stock documents by kind, status or warehouse. |
-| GET /inventory/documents/{id} | Header and line snapshots for a document. |
+| GET /inventory/documents/{id} | Header (including document.version), current line snapshots and history. |
 | POST /inventory/documents | Creates or safely replays a draft by requestId. Kind is 1 receipt, 2 issue, 3 transfer, 4 adjustment or 5 count. |
-| POST /inventory/documents/{id}/post | Posts a draft and its effects in a transaction. |
-| POST /inventory/documents/{id}/cancel | Cancels a draft. |
+| PUT /inventory/documents/{id} | Body: version, warehouseId, destinationId, note, lines; optional recount (default false). Only drafts are editable; kind is immutable. Count edits require recount=true to confirm fresh counts. |
+| POST /inventory/documents/{id}/post | Body: {version}. Posts draft, ledger, balances and audit atomically. Legacy empty bodies are accepted only for never-edited documents; edited drafts require version. |
+| POST /inventory/documents/{id}/cancel | Body: {version, reason}; nonblank reason, maximum 300 characters. Cancels only drafts. |
 | POST /inventory/documents/{id}/reverse | Adds one linked inverse document when every affected position still has the original as its latest movement. |
 
 Inventory view and post actions are enforced by policy. A stock conflict returns HTTP 409 and a machine-readable error code.
+
+## Draft concurrency and history
+
+Versions are base64 SQL rowversions. Stale writes return 409; invalid inputs return 400 and missing grants return 403. Order transitions follow draft -> pending approval -> approved, rejected or returned for revision. Returned orders must be edited before resubmission. Rejected orders are terminal. Cancellation also permits pending, approved and partially fulfilled orders; existing posted facts stay immutable.
+
+Approval requires the module Approve grant. Without `Orders.SelfApprove`, the actor cannot be the creator, latest editor or latest submitter; a missing legacy creator also requires this explicit override. Optional `Orders__ApprovalThresholdVnd` applies to rounded line totals: totals at or above it additionally require `Orders.ApproveAboveLimit`. An absent threshold disables this amount gate. `canApprove` is advisory; the server rechecks during the locked transition.
+
+Identical create retries use the original normalized payload fingerprint even after draft edits, including migrated drafts whose fingerprint is frozen before their first edit. Order transitions retry only when the latest successful event matches action, original input version, actor and normalized reason. Stock versioned post/cancel retries match the original token and actor (cancel also matches reason); they do not duplicate ledger or audit entries. A different intent conflicts. Draft PUT does not provide lost-response replay: reload after an uncertain response before another edit.
+
+Both detail APIs return `history: [{action, atUtc, actorId, actorName, reason}]` from successful audit events, ordered by event ID. Unknown historical actors remain null; actorName is the current account display name. History records actions and reasons, not prior draft contents or a restore facility. Details read a coherent document/lines/history view.
+
+Stock edit costs require `Reports.Sensitive` for explicit values. Omitted/null cost retains a retained product's stored cost. A restricted editor adding a new receipt product omits cost and receives the server's current purchase-price snapshot; replacing a product does not carry the removed product's cost. Other omitted costs retain existing posting defaults. Response costs stay null without valuation permission. Creation retains its existing explicit receipt-cost requirement.

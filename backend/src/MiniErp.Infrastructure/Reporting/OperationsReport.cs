@@ -33,6 +33,7 @@ public sealed class OperationsReport(ErpDbContext db, TimeProvider clock)
     public async Task<DashboardResponse> DashboardAsync(DateOnly? from, DateOnly? to, IReadOnlySet<string> grants, CancellationToken ct)
     {
         var (start, end) = Dates(from, to);
+        var today = BusinessCalendar.DateAt(clock.GetUtcNow().UtcDateTime);
         var bounds = Bounds(start, end, new { BusinessCalendar.OffsetHours });
         var metrics = new List<DashboardMetric>();
         var alerts = new List<DashboardAlert>();
@@ -69,6 +70,11 @@ public sealed class OperationsReport(ErpDbContext db, TimeProvider clock)
             var count = await sql.ExecuteScalarAsync<decimal>(new CommandDefinition("SELECT COUNT(*) FROM orders.Orders WHERE Kind=@Kind AND CreatedAtUtc>=@From AND CreatedAtUtc<@Until",
                 Bounds(start, end, new { kind.Kind }), read, cancellationToken: ct));
             metrics.Add(new(kind.Key, kind.Label, count, "đơn", kind.Href));
+            var overdue = await sql.ExecuteScalarAsync<int>(new CommandDefinition("""
+                SELECT COUNT(*) FROM orders.Orders
+                WHERE Kind=@Kind AND Status IN (3,4) AND ExpectedDate < @Today
+                """, new { kind.Kind, Today = today.ToDateTime(TimeOnly.MinValue) }, read, cancellationToken: ct));
+            alerts.Add(new(kind.Kind == 1 ? "Đơn mua trễ ngày nhận" : "Đơn bán trễ ngày giao", overdue, kind.Href + "?overdue=true"));
             if(grants.Contains(kind.Kind==1?Permissions.ApprovePurchasing:Permissions.ApproveSales))
             {
                 var pending=await sql.ExecuteScalarAsync<int>(new CommandDefinition("SELECT COUNT(*) FROM orders.Orders WHERE Kind=@Kind AND Status=2",new{kind.Kind},read,cancellationToken:ct));

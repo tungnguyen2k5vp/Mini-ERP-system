@@ -8,6 +8,10 @@ using MiniErp.Application.Orders;
 using MiniErp.Domain.Orders;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Data.SqlClient;
+using System.Net.Http.Headers;
 using MiniErp.Application.Auth;
 using MiniErp.Domain;
 using MiniErp.Domain.Inventory;
@@ -18,6 +22,305 @@ namespace MiniErp.IntegrationTests;
 [Collection("SqlServer")]
 public sealed class OrderTests(ErpFixture fixture)
 {
+    [SqlServerFact]
+    public async Task Detail_holds_document_lock_until_ambient_read_committed_transaction_ends()
+    {
+        using var client = await fixture.AuthenticatedClientAsync();
+        var s = await SetupAsync(client);
+        var order = await CreateAsync(client, new(Guid.NewGuid(), OrderKind.Purchase,
+            s.Supplier, s.Warehouse, "Before locked detail", [new(s.Product, 1, 10)]));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        await using var readerScope = fixture.Services.CreateAsyncScope();
+        var reader = readerScope.ServiceProvider.GetRequiredService<ErpDbContext>();
+        await using var ambient = await reader.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
+        // Returning from DetailAsync is the synchronization point: its own read scope has ended,
+        // but the caller's READ COMMITTED transaction (including RCSI databases) still owns the lock.
+        var detail = await readerScope.ServiceProvider.GetRequiredService<OrderService>().DetailAsync(order.Order.Id, ct);
+        var edit = new OrderEditInput(detail.Order.Version, s.Supplier, s.Warehouse, "After reader release", null, [new(s.Product, 2, 11)]);
+        var actor = new RequestActor(null, "detail-lock-regression");
+        await using var writerScope = fixture.Services.CreateAsyncScope();
+        var writer = writerScope.ServiceProvider.GetRequiredService<ErpDbContext>();
+        var service = writerScope.ServiceProvider.GetRequiredService<OrderService>();
+        await writer.Database.OpenConnectionAsync(ct);
+        try
+        {
+            await writer.Database.ExecuteSqlRawAsync("SET LOCK_TIMEOUT 500;", ct);
+            var error = await Record.ExceptionAsync(() => Task.Run(() => service.EditAsync(order.Order.Id, edit, actor, ct), ct));
+            Assert.NotNull(error);
+            while (error is not SqlException && error.InnerException is not null) error = error.InnerException;
+            Assert.Equal(1222, Assert.IsType<SqlException>(error).Number);
+            Assert.Equal(detail.Order.Version, (await readerScope.ServiceProvider.GetRequiredService<OrderService>()
+                .DetailAsync(order.Order.Id, ct)).Order.Version);
+            await ambient.CommitAsync(ct);
+            await ambient.DisposeAsync();
+            await writer.Database.ExecuteSqlRawAsync("SET LOCK_TIMEOUT -1;", ct);
+            var saved = await Task.Run(() => service.EditAsync(order.Order.Id, edit, actor, ct), ct);
+            Assert.Equal(edit.Note, saved.Note);
+            Assert.Equal(2, Assert.Single(saved.Lines).Quantity);
+            Assert.NotEqual(detail.Order.Version, saved.Order.Version);
+            Assert.Single(saved.History!, x => x.Action == "EditOrder");
+        }
+        finally
+        {
+            await writer.Database.ExecuteSqlRawAsync("SET LOCK_TIMEOUT -1;", CancellationToken.None);
+            await writer.Database.CloseConnectionAsync();
+        }
+    }
+
+    [SqlServerFact]
+    public async Task Different_users_competing_draft_edits_persist_one_complete_winner()
+    {
+        using var admin = await fixture.AuthenticatedClientAsync();
+        var a = await SetupAsync(admin);
+        var b = await SetupAsync(admin);
+        async Task<HttpClient> User()
+        {
+            var email = $"order-editor-{Guid.NewGuid():N}@minierp.example";
+            var password = Guid.NewGuid().ToString("N") + "Aa7!";
+            using var created = await admin.PostAsJsonAsync("/api/v1/users", new CreateUserRequest(email, "Concurrent editor", password, "Purchasing Staff"));
+            await ReadAsync<UserAccount>(created);
+            return await fixture.AuthenticatedClientAsync(email, password);
+        }
+        using var first = await User();
+        using var second = await User();
+        var order = await CreateAsync(admin, new(Guid.NewGuid(), OrderKind.Purchase,
+            a.Supplier, a.Warehouse, "Original", [new(a.Product, 1, 10)]));
+        var inputs = new[]
+        {
+            new OrderEditInput(order.Order.Version, a.Supplier, a.Warehouse, "First editor", new(2027, 1, 2), [new(a.Product, 2, 11)]),
+            new OrderEditInput(order.Order.Version, b.Supplier, b.Warehouse, "Second editor", new(2027, 2, 3), [new(b.Product, 3, 22)])
+        };
+        var path = $"/api/v1/orders/{order.Order.Id}";
+        var responses = await Task.WhenAll(first.PutAsJsonAsync(path, inputs[0]), second.PutAsJsonAsync(path, inputs[1]));
+        try
+        {
+            Assert.Single(responses, x => x.StatusCode == HttpStatusCode.OK);
+            Assert.Single(responses, x => x.StatusCode == HttpStatusCode.Conflict);
+            var winnerIndex = Array.FindIndex(responses, x => x.StatusCode == HttpStatusCode.OK);
+            var winner = inputs[winnerIndex];
+            var response = await ReadAsync<OrderDetail>(responses[winnerIndex]);
+            var persisted = (await admin.GetFromJsonAsync<OrderDetail>(path))!;
+            Assert.Equal(response.Order.Version, persisted.Order.Version);
+            Assert.Equal(OrderStatus.Draft, persisted.Order.Status);
+            Assert.Equal(winner.PartnerId, persisted.Order.PartnerId);
+            Assert.Equal(winner.WarehouseId, persisted.Order.WarehouseId);
+            Assert.Equal(winner.Note, persisted.Note);
+            Assert.Equal(winner.ExpectedDate, persisted.Order.ExpectedDate);
+            var line = Assert.Single(persisted.Lines);
+            Assert.Equal(winner.Lines[0].ProductId, line.ProductId);
+            Assert.Equal(winner.Lines[0].Quantity, line.Quantity);
+            Assert.Equal(winner.Lines[0].UnitPrice, line.UnitPrice);
+            var edit = Assert.Single(persisted.History!, x => x.Action == "EditOrder");
+            using var profileResponse = await (winnerIndex == 0 ? first : second).GetAsync("/api/v1/auth/me");
+            Assert.Equal((await ReadAsync<UserProfile>(profileResponse)).Id, edit.ActorId);
+        }
+        finally { foreach (var response in responses) response.Dispose(); }
+    }
+
+    [SqlServerFact]
+    public async Task Http_configured_threshold_blocks_exact_boundary_and_allows_authorized_override()
+    {
+        using var admin = await fixture.AuthenticatedClientAsync();
+        var s = await SetupAsync(admin);
+        var email = $"order-limit-{Guid.NewGuid():N}@minierp.example";
+        var password = Guid.NewGuid().ToString("N") + "Aa7!";
+        using var created = await admin.PostAsJsonAsync("/api/v1/users", new CreateUserRequest(email, "Threshold peer", password, "Manager"));
+        await ReadAsync<UserAccount>(created);
+        await using var configured = fixture.WithWebHostBuilder(builder => builder.ConfigureAppConfiguration((_, config) =>
+            config.AddInMemoryCollection(new Dictionary<string, string?> { ["Orders:ApprovalThresholdVnd"] = "20" })));
+        async Task<HttpClient> Login(string login, string secret)
+        {
+            var client = configured.CreateClient(new() { BaseAddress = new Uri(ErpFixture.Origin) });
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
+                { Content = JsonContent.Create(new LoginRequest(login, secret)) };
+            request.Headers.Add("Origin", ErpFixture.Origin);
+            request.Headers.Add("X-MiniErp-Session", "1");
+            using var response = await client.SendAsync(request);
+            var session = await ReadAsync<MiniErp.Api.Auth.SessionResponse>(response);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", session.AccessToken);
+            return client;
+        }
+        using var peer = await Login(email, password);
+        using var privileged = await Login(fixture.AdminEmail, fixture.AdminPassword);
+        var exact = await TransitionAsync(admin, await CreateAsync(admin, new(Guid.NewGuid(), OrderKind.Purchase,
+            s.Supplier, s.Warehouse, null, [new(s.Product, 2, 10)])), "submit");
+        Assert.False((await peer.GetFromJsonAsync<OrderDetail>($"/api/v1/orders/{exact.Order.Id}"))!.CanApprove);
+        using var denied = await peer.PostAsJsonAsync($"/api/v1/orders/{exact.Order.Id}/approve", new OrderVersion(exact.Order.Version));
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.True((await privileged.GetFromJsonAsync<OrderDetail>($"/api/v1/orders/{exact.Order.Id}"))!.CanApprove);
+        Assert.Equal(OrderStatus.Approved, (await TransitionAsync(privileged, exact, "approve")).Order.Status);
+        var below = await TransitionAsync(admin, await CreateAsync(admin, new(Guid.NewGuid(), OrderKind.Purchase,
+            s.Supplier, s.Warehouse, null, [new(s.Product, 1, 19.99m)])), "submit");
+        Assert.True((await peer.GetFromJsonAsync<OrderDetail>($"/api/v1/orders/{below.Order.Id}"))!.CanApprove);
+        Assert.Equal(OrderStatus.Approved, (await TransitionAsync(peer, below, "approve")).Order.Status);
+    }
+
+    [SqlServerFact]
+    public async Task Failed_edit_then_retry_in_same_scope_uses_persisted_status_and_version()
+    {
+        using var client = await fixture.AuthenticatedClientAsync();
+        var s = await SetupAsync(client);
+        var order = await TransitionAsync(client, await CreateAsync(client, new(Guid.NewGuid(), OrderKind.Purchase,
+            s.Supplier, s.Warehouse, null, [new(s.Product, 2, 10)])), "submit");
+        using var returned = await client.PostAsJsonAsync($"/api/v1/orders/{order.Order.Id}/return-for-revision",
+            new OrderVersion(order.Order.Version, "Recheck partner"));
+        order = await ReadAsync<OrderDetail>(returned);
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<OrderService>();
+        var db = scope.ServiceProvider.GetRequiredService<ErpDbContext>();
+        var actor = new RequestActor(Guid.NewGuid(), "rollback-reuse");
+        await Assert.ThrowsAsync<ErpException>(() => service.EditAsync(order.Order.Id,
+            new(order.Order.Version, Guid.NewGuid(), s.Warehouse, "Invalid partner", null, [new(s.Product, 3, 10)]), actor, default));
+        var persisted = await service.DetailAsync(order.Order.Id, default);
+        Assert.Equal(OrderStatus.ReturnedForRevision, persisted.Order.Status);
+        Assert.Equal(order.Order.Version, persisted.Order.Version);
+        Assert.Equal(2, Assert.Single(persisted.Lines).Quantity);
+        Assert.False(db.ChangeTracker.HasChanges());
+        var saved = await service.EditAsync(order.Order.Id,
+            new(order.Order.Version, s.Supplier, s.Warehouse, "Corrected", null, [new(s.Product, 3, 10)]), actor, default);
+        var submitted = await service.TransitionAsync(order.Order.Id, "submit", new(saved.Order.Version), actor, default);
+        Assert.Equal(OrderStatus.PendingApproval, submitted.Order.Status);
+        Assert.Equal(3, Assert.Single(submitted.Lines).Quantity);
+    }
+
+    [SqlServerFact]
+    public async Task Http_manager_cannot_approve_own_content_but_peer_can_and_staff_cannot_review()
+    {
+        using var admin = await fixture.AuthenticatedClientAsync();
+        var s = await SetupAsync(admin);
+        async Task<HttpClient> User(string role)
+        {
+            var email = $"order-policy-{Guid.NewGuid():N}@minierp.example";
+            var password = Guid.NewGuid().ToString("N") + "Aa7!";
+            using var created = await admin.PostAsJsonAsync("/api/v1/users", new CreateUserRequest(email, "Order policy", password, role));
+            await ReadAsync<UserAccount>(created);
+            return await fixture.AuthenticatedClientAsync(email, password);
+        }
+        using var author = await User("Manager");
+        using var peer = await User("Manager");
+        using var staff = await User("Purchasing Staff");
+        var order = await TransitionAsync(author, await CreateAsync(author, new(Guid.NewGuid(), OrderKind.Purchase,
+            s.Supplier, s.Warehouse, null, [new(s.Product, 2, 10)])), "submit");
+        Assert.False(order.CanApprove);
+        Assert.False((await author.GetFromJsonAsync<OrderDetail>($"/api/v1/orders/{order.Order.Id}"))!.CanApprove);
+        Assert.True((await peer.GetFromJsonAsync<OrderDetail>($"/api/v1/orders/{order.Order.Id}"))!.CanApprove);
+        using var selfDenied = await author.PostAsJsonAsync($"/api/v1/orders/{order.Order.Id}/approve", new OrderVersion(order.Order.Version));
+        Assert.Equal(HttpStatusCode.Forbidden, selfDenied.StatusCode);
+        using var staffDenied = await staff.PostAsJsonAsync($"/api/v1/orders/{order.Order.Id}/return-for-revision", new OrderVersion(order.Order.Version, "Review"));
+        Assert.Equal(HttpStatusCode.Forbidden, staffDenied.StatusCode);
+        using var peerReturned = await peer.PostAsJsonAsync($"/api/v1/orders/{order.Order.Id}/return-for-revision", new OrderVersion(order.Order.Version, "Revise"));
+        order = await ReadAsync<OrderDetail>(peerReturned);
+        using var edited = await peer.PutAsJsonAsync($"/api/v1/orders/{order.Order.Id}",
+            new OrderEditInput(order.Order.Version, s.Supplier, s.Warehouse, "Peer edited", null, [new(s.Product, 3, 10)]));
+        order = await TransitionAsync(staff, await ReadAsync<OrderDetail>(edited), "submit");
+        Assert.False((await peer.GetFromJsonAsync<OrderDetail>($"/api/v1/orders/{order.Order.Id}"))!.CanApprove);
+        using var editorDenied = await peer.PostAsJsonAsync($"/api/v1/orders/{order.Order.Id}/approve", new OrderVersion(order.Order.Version));
+        Assert.Equal(HttpStatusCode.Forbidden, editorDenied.StatusCode);
+        // A separate document proves ordinary peer approval still works through HTTP.
+        var other = await TransitionAsync(author, await CreateAsync(author, new(Guid.NewGuid(), OrderKind.Purchase,
+            s.Supplier, s.Warehouse, null, [new(s.Product, 2, 10)])), "submit");
+        other = await TransitionAsync(peer, other, "approve");
+        Assert.Equal(OrderStatus.Approved, other.Order.Status);
+    }
+
+    [SqlServerFact]
+    public async Task Legacy_draft_edit_and_submit_race_has_one_winner_and_keeps_original_request()
+    {
+        using var client = await fixture.AuthenticatedClientAsync();
+        var s = await SetupAsync(client);
+        var input = new OrderInput(Guid.NewGuid(), OrderKind.Purchase, s.Supplier, s.Warehouse, "Before migration", [new(s.Product, 2, 10)]);
+        var order = await CreateAsync(client, input);
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ErpDbContext>();
+            await db.Orders.Where(x => x.Id == order.Order.Id).ExecuteUpdateAsync(set => set.SetProperty(x => x.CreatePayloadHash, (string?)null));
+        }
+        order = (await client.GetFromJsonAsync<OrderDetail>($"/api/v1/orders/{order.Order.Id}"))!;
+        using var edited = await client.PutAsJsonAsync($"/api/v1/orders/{order.Order.Id}",
+            new OrderEditInput(order.Order.Version, s.Supplier, s.Warehouse, "First edit", null, [new(s.Product, 3, 10)]));
+        order = await ReadAsync<OrderDetail>(edited);
+        Assert.Equal(3, Assert.Single((await CreateAsync(client, input)).Lines).Quantity);
+        var responses = await Task.WhenAll(
+            client.PutAsJsonAsync($"/api/v1/orders/{order.Order.Id}",
+                new OrderEditInput(order.Order.Version, s.Supplier, s.Warehouse, "Competing edit", null, [new(s.Product, 4, 10)])),
+            client.PostAsJsonAsync($"/api/v1/orders/{order.Order.Id}/submit", new OrderVersion(order.Order.Version)));
+        try
+        {
+            Assert.Single(responses, x => x.StatusCode == HttpStatusCode.OK);
+            Assert.Single(responses, x => x.StatusCode == HttpStatusCode.Conflict);
+        }
+        finally { foreach (var response in responses) response.Dispose(); }
+        Assert.Equal(order.Order.Id, (await CreateAsync(client, input)).Order.Id);
+    }
+
+    [SqlServerFact]
+    public async Task Revision_requires_real_edit_preserves_create_replay_and_records_reasons()
+    {
+        using var client = await fixture.AuthenticatedClientAsync();
+        var s = await SetupAsync(client);
+        var input = new OrderInput(Guid.NewGuid(), OrderKind.Purchase, s.Supplier, s.Warehouse, "Original",
+            [new(s.Product, 2m, 10m)], DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-2)));
+        var original = await CreateAsync(client, input);
+        var order = await TransitionAsync(client, original, "submit");
+        using var returned = await client.PostAsJsonAsync($"/api/v1/orders/{order.Order.Id}/return-for-revision",
+            new OrderVersion(order.Order.Version, "Correct quantities"));
+        order = await ReadAsync<OrderDetail>(returned);
+        Assert.Equal(OrderStatus.ReturnedForRevision, order.Order.Status);
+        using var premature = await client.PostAsJsonAsync($"/api/v1/orders/{order.Order.Id}/submit", new OrderVersion(order.Order.Version));
+        Assert.Equal(HttpStatusCode.Conflict, premature.StatusCode);
+        var edit = new OrderEditInput(order.Order.Version, s.Supplier, s.Warehouse, " Original ", input.ExpectedDate, [new(s.Product, 2.0000m, 10.000m)]);
+        using var unchanged = await client.PutAsJsonAsync($"/api/v1/orders/{order.Order.Id}", edit);
+        Assert.Equal(HttpStatusCode.BadRequest, unchanged.StatusCode);
+        using var saved = await client.PutAsJsonAsync($"/api/v1/orders/{order.Order.Id}", edit with { Lines = [new(s.Product, 3, 10)] });
+        order = await ReadAsync<OrderDetail>(saved);
+        Assert.Equal(OrderStatus.Draft, order.Order.Status);
+        Assert.False(order.Order.IsOverdue);
+        Assert.Equal(3, Assert.Single((await CreateAsync(client, input with { Note = " Original ", Lines = [new(s.Product, 2.000m, 10.0000m)] })).Lines).Quantity);
+        order = await ApproveAsync(client, order);
+        Assert.True(order.Order.IsOverdue);
+        Assert.Contains(order.History!, x => x.Action == "return-for-revisionOrder" && x.Reason == "Correct quantities");
+        using var missingReason = await client.PostAsJsonAsync($"/api/v1/orders/{order.Order.Id}/cancel", new OrderVersion(order.Order.Version));
+        Assert.Equal(HttpStatusCode.BadRequest, missingReason.StatusCode);
+        using var cancel = await client.PostAsJsonAsync($"/api/v1/orders/{order.Order.Id}/cancel", new OrderVersion(order.Order.Version, "No longer needed"));
+        var cancelled = await ReadAsync<OrderDetail>(cancel);
+        using var changedRetry = await client.PostAsJsonAsync($"/api/v1/orders/{order.Order.Id}/cancel", new OrderVersion(order.Order.Version, "Different reason"));
+        Assert.Equal(HttpStatusCode.Conflict, changedRetry.StatusCode);
+        Assert.False(cancelled.Order.IsOverdue);
+    }
+
+    [SqlServerFact]
+    public async Task Approval_checks_authors_threshold_and_unknown_legacy_creator_under_lock()
+    {
+        using var client = await fixture.AuthenticatedClientAsync();
+        var s = await SetupAsync(client);
+        var order = await TransitionAsync(client, await CreateAsync(client, new(Guid.NewGuid(), OrderKind.Purchase,
+            s.Supplier, s.Warehouse, null, [new(s.Product, 2, 10)])), "submit");
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ErpDbContext>();
+        var existing = scope.ServiceProvider.GetRequiredService<OrderService>();
+        var actorId = (await db.AuditEntries.SingleAsync(x => x.Entity == "Order" && x.EntityId == order.Order.Id.ToString() && x.Action == "CreateOrder")).UserId;
+        Assert.False(await existing.CanApproveAsync(order.Order.Id, actorId, false, true, default));
+        Assert.True(await existing.CanApproveAsync(order.Order.Id, Guid.NewGuid(), false, true, default));
+        var threshold = new OrderService(db, scope.ServiceProvider.GetRequiredService<MiniErp.Infrastructure.Inventory.StockService>(),
+            scope.ServiceProvider.GetRequiredService<IFinancePosting>(), TimeProvider.System, new(20));
+        Assert.False(await threshold.CanApproveAsync(order.Order.Id, Guid.NewGuid(), false, false, default));
+        Assert.True(await threshold.CanApproveAsync(order.Order.Id, Guid.NewGuid(), false, true, default));
+        var latestEditor = Guid.NewGuid();
+        db.AuditEntries.Add(AuditEntry.Create(new(latestEditor, "editor-policy-test"), DateTime.UtcNow,
+            "EditOrder", "Order", order.Order.Id.ToString()));
+        await db.SaveChangesAsync();
+        Assert.False(await existing.CanApproveAsync(order.Order.Id, latestEditor, false, true, default));
+        Assert.True(await existing.CanApproveAsync(order.Order.Id, latestEditor, true, true, default));
+        var failure = await Assert.ThrowsAsync<ErpException>(() => threshold.TransitionAsync(order.Order.Id, "approve",
+            new(order.Order.Version), new(Guid.NewGuid(), "threshold-test"), default));
+        Assert.Equal("approval_permission_required", failure.Code);
+        db.ChangeTracker.Clear();
+        await db.AuditEntries.Where(x => x.Entity == "Order" && x.EntityId == order.Order.Id.ToString() && x.Action == "CreateOrder").ExecuteUpdateAsync(set => set.SetProperty(x => x.UserId, (Guid?)null));
+        Assert.False(await existing.CanApproveAsync(order.Order.Id, Guid.NewGuid(), false, true, default));
+        Assert.True(await existing.CanApproveAsync(order.Order.Id, Guid.NewGuid(), true, true, default));
+    }
+
     [SqlServerFact]
     public async Task Rounded_sku_snapshots_leave_other_sku_cost_outstanding_and_reverse_exact_source_cost()
     {
@@ -356,7 +659,7 @@ public sealed class OrderTests(ErpFixture fixture)
     private static async Task<OrderDetail> CreateAsync(HttpClient client, OrderInput input)
     { using var r = await client.PostAsJsonAsync("/api/v1/orders", input); return await ReadAsync<OrderDetail>(r); }
     private static async Task<OrderDetail> TransitionAsync(HttpClient client, OrderDetail order, string action)
-    { using var r = await client.PostAsJsonAsync($"/api/v1/orders/{order.Order.Id}/{action}", new OrderVersion(order.Order.Version)); return await ReadAsync<OrderDetail>(r); }
+    { using var r = await client.PostAsJsonAsync($"/api/v1/orders/{order.Order.Id}/{action}", new OrderVersion(order.Order.Version, action == "cancel" ? "Test cancellation" : null)); return await ReadAsync<OrderDetail>(r); }
     private static async Task<OrderDetail> ApproveAsync(HttpClient client, OrderDetail order) => await TransitionAsync(client, await TransitionAsync(client, order, "submit"), "approve");
     private static async Task<OrderDetail> FulfillAsync(HttpClient client, int id, FulfillmentInput input)
     { using var r = await client.PostAsJsonAsync($"/api/v1/orders/{id}/fulfill", input); return await ReadAsync<OrderDetail>(r); }

@@ -25,3 +25,24 @@ A posted document remains in the ledger. To reverse it, open its detail and choo
 The order snapshots the agreed quantity and unit price per product. Submission and approval use the current order version. Sales approval reserves quantities per line. Partial shipment releases only what ships. Cancellation releases the remainder. Receipt or shipment checks the unfulfilled quantity and writes the order line, stock movement, balance, invoice and audit in a single database transaction.
 
 A return is capped at the net quantity delivered and creates its own stock movement and credit. A correction reverses the latest eligible posting through its source order. Previous invoice and cash records remain available. See [settlement rules](FINANCE.md) for cash limits, credit offsets, refunds and aging.
+
+## V2 · Quy trình duyệt và sửa chứng từ
+
+| Chứng từ và trạng thái | Thao tác hợp lệ | Kết quả |
+| --- | --- | --- |
+| Đơn nháp | Sửa, gửi duyệt, hủy | Nháp, chờ duyệt, đã hủy |
+| Đơn chờ duyệt | Duyệt, trả để sửa, từ chối, hủy | Đã duyệt, cần chỉnh sửa, bị từ chối, đã hủy |
+| Đơn cần chỉnh sửa | Sửa nội dung, hủy | Nháp sau khi lưu thay đổi, hoặc đã hủy |
+| Đơn đã duyệt | Nhận/giao hàng, hủy phần chưa thực hiện | Một phần, hoàn thành, hoặc đã hủy |
+| Đơn thực hiện một phần | Nhận/giao tiếp, hủy phần còn lại | Một phần, hoàn thành, hoặc đã hủy và giải phóng phần giữ còn lại |
+| Đơn hoàn thành hoặc đã hủy sau khi giao/nhận | Trả hàng hoặc đảo chứng từ đủ điều kiện | Ghi chứng từ và bút toán liên kết với nguồn |
+| Đơn bị từ chối | Xem lịch sử | Kết thúc xét duyệt |
+| Phiếu kho nháp độc lập | Sửa, ghi sổ, hủy | Nháp, đã ghi sổ, đã hủy |
+| Phiếu kho đã ghi sổ | Đảo phiếu đủ điều kiện | Chứng từ đảo liên kết với bản gốc |
+| Phiếu kho đã đảo hoặc đã hủy | Xem lịch sử | Kết thúc |
+
+Các thao tác sửa, gửi và xét duyệt dùng phiên bản người dùng đang xem. Trả để sửa, từ chối và hủy phải ghi lý do. Việc duyệt đơn bán giữ hàng trong cùng giao dịch. Hủy đơn đã giao một phần giữ nguyên phiếu kho và hóa đơn đã ghi sổ.
+
+Quyền duyệt theo loại đơn là điều kiện đầu tiên. Đơn do chính người duyệt lập, sửa nội dung gần nhất hoặc gửi duyệt cần thêm quyền `Orders.SelfApprove`. Với chứng từ cũ thiếu người lập trong nhật ký, quyền này cũng bắt buộc. Quản trị viên có quyền này theo cơ chế cấp quyền hiện hành. Các vai trò nghiệp vụ mặc định thực hiện duyệt chéo. Nếu doanh nghiệp cấu hình `Orders__ApprovalThresholdVnd`, tổng tiền từ đúng ngưỡng trở lên còn yêu cầu `Orders.ApproveAboveLimit`. Bỏ trống cấu hình sẽ chỉ xét quyền theo loại đơn và tác giả.
+
+Ngày dự kiến là ngày nghiệp vụ Việt Nam. Đơn đã duyệt hoặc thực hiện một phần được cảnh báo trễ từ đầu ngày kế tiếp. Nhật ký dùng UTC và hiển thị người thực hiện theo tài khoản đã ghi nhận.

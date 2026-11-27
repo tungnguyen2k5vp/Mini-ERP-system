@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using MiniErp.Application;
 using MiniErp.Application.Finance;
 using MiniErp.Application.Orders;
+using MiniErp.Application.Reporting;
 using MiniErp.Domain;
 using MiniErp.Domain.Catalog;
 using MiniErp.Domain.Finance;
@@ -11,7 +12,7 @@ using MiniErp.Infrastructure.Inventory;
 using MiniErp.Infrastructure.Persistence;
 namespace MiniErp.Infrastructure.Orders;
 
-public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePosting finance, TimeProvider clock)
+public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePosting finance, TimeProvider clock, OrderApprovalPolicy? approvalPolicy = null)
 {
     public static string Number(OrderKind kind, int id) => $"{(kind == OrderKind.Purchase ? "PO" : "SO")}-{id:000000}";
     public async Task<OrderKind> KindAsync(int id, CancellationToken ct) => await db.Orders.Where(x => x.Id == id).Select(x => (OrderKind?)x.Kind)
@@ -25,9 +26,10 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
         return new(partners, warehouses, products);
     }
     public async Task<Page<OrderRow>> ListAsync(OrderKind kind, Guid? partnerId, int page, int size, CancellationToken ct,
-        string? search = null, OrderStatus? status = null, string? sort = null, bool descending = true)
+        string? search = null, OrderStatus? status = null, string? sort = null, bool descending = true, bool onlyOverdue = false)
     {
         var query = db.Orders.AsNoTracking().Where(x => x.Kind == kind && (partnerId == null || x.PartnerId == partnerId));
+        if (onlyOverdue) { var today = Today; query = query.Where(x => (x.Status == OrderStatus.Approved || x.Status == OrderStatus.Partial) && x.ExpectedDate < today); }
         if (status.HasValue) query = query.Where(x => x.Status == status);
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -50,36 +52,32 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
     }
     public async Task<OrderDetail> DetailAsync(int id, CancellationToken ct)
     {
-        var order = await LoadAsync(id, ct);
+        await using var read = await db.BeginDocumentReadAsync(ct);
+        // A create replay can enter through an ambient read-committed write transaction.
+        var order = await db.Orders.FromSqlInterpolated($"SELECT * FROM orders.Orders WITH (HOLDLOCK) WHERE Id={id}")
+            .AsNoTracking().Include(x => x.Lines).Include(x => x.Partner).Include(x => x.Warehouse)
+            .SingleOrDefaultAsync(ct) ?? throw ErpException.Missing("order_missing", "Không tìm thấy đơn.");
         var fulfillments = await db.OrderFulfillments.Where(x => x.OrderId == id).OrderByDescending(x => x.Id)
             .Select(x => new FulfillmentResponse(x.Id, x.StockDocumentId, x.IsReturn, x.ReversesId, x.CreatedAtUtc, x.Amount)).ToArrayAsync(ct);
-        return new(Row(order), order.Note, order.Lines.Select(x => new OrderLineResponse(x.ProductId, x.Sku, x.ProductName,
-            x.Quantity, x.UnitPrice, x.FulfilledQuantity, x.ReturnedQuantity, x.ReservedQuantity)).ToArray(), fulfillments);
+        var detail = new OrderDetail(Row(order), order.Note, order.Lines.Select(x => new OrderLineResponse(x.ProductId, x.Sku, x.ProductName,
+            x.Quantity, x.UnitPrice, x.FulfilledQuantity, x.ReturnedQuantity, x.ReservedQuantity)).ToArray(), fulfillments, await db.DocumentHistoryAsync("Order", id, ct));
+        if (read is not null) await read.CommitAsync(ct);
+        return detail;
     }
     public async Task<OrderDetail> CreateAsync(OrderInput input, RequestActor actor, CancellationToken ct)
     {
-        if (!Enum.IsDefined(input.Kind) || input.RequestId == Guid.Empty || input.Lines is not { Length: >= 1 and <= 50 } ||
-            input.Lines.Any(x => x is null || x.ProductId == Guid.Empty) || input.Lines.Select(x => x.ProductId).Distinct().Count() != input.Lines.Length)
-            throw ErpException.Invalid("invalid_order", "Chọn từ 1 đến 50 sản phẩm khác nhau.");
+        Validate(input);
         var note = CatalogRules.OptionalText(input.Note);
-        if (note?.Length > 300) throw ErpException.Invalid("invalid_note", "Ghi chú tối đa 300 ký tự.");
-        foreach (var line in input.Lines) { StockBalance.RequirePositive(line.Quantity); CatalogRules.NonNegative(line.UnitPrice); }
-        if (input.Lines.Sum(x => decimal.Round(x.Quantity * x.UnitPrice, 2, MidpointRounding.AwayFromZero)) > 999_999_999_999m)
-            throw ErpException.Invalid("order_total_exceeded", "Tổng tiền đơn vượt giới hạn cho phép.");
+        await using var tx = await db.BeginDocumentWriteAsync(ct);
+        await db.LockDocumentRequestAsync("MiniErp.OrderRequest:" + input.RequestId, ct);
         var prior = await db.Orders.Include(x => x.Lines).SingleOrDefaultAsync(x => x.RequestId == input.RequestId, ct);
         if (prior is not null)
         {
-            if (prior.Kind != input.Kind || prior.PartnerId != input.PartnerId || prior.WarehouseId != input.WarehouseId || prior.Note != note ||
-                prior.Lines.Count != input.Lines.Length || !input.Lines.All(l => prior.Lines.Any(x => x.ProductId == l.ProductId && x.Quantity == l.Quantity && x.UnitPrice == l.UnitPrice)))
+            if ((prior.CreatePayloadHash ?? Fingerprint(prior)) != Fingerprint(input))
                 throw ErpException.Conflict("request_id_conflict", "Mã yêu cầu đã dùng cho dữ liệu khác.");
             return await DetailAsync(prior.Id, ct);
         }
-        var partnerKind = input.Kind == OrderKind.Purchase ? PartnerKind.Supplier : PartnerKind.Customer;
-        var ids = input.Lines.Select(x => x.ProductId).ToArray();
-        var products = await db.Products.Where(x => ids.Contains(x.Id) && x.IsActive).ToDictionaryAsync(x => x.Id, ct);
-        if (products.Count != ids.Length || !await db.Partners.AnyAsync(x => x.Id == input.PartnerId && x.Kind == partnerKind && x.IsActive, ct) ||
-            !await db.Lookups.AnyAsync(x => x.Id == input.WarehouseId && x.Kind == LookupKind.Warehouse && x.IsActive, ct))
-            throw ErpException.Invalid("invalid_reference", "Chọn đối tác, kho và sản phẩm đang sử dụng.");
+        var lines = await BuildLinesAsync(input, ct);
         var order = new TradeOrder
         {
             RequestId = input.RequestId,
@@ -87,37 +85,44 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
             PartnerId = input.PartnerId,
             WarehouseId = input.WarehouseId,
             Note = note,
+            ExpectedDate = input.ExpectedDate,
             CreatedAtUtc = Now,
             UpdatedAtUtc = Now,
-            Lines = input.Lines.Select(x => new OrderLine
-            {
-                ProductId = x.ProductId,
-                Sku = products[x.ProductId].Sku,
-                ProductName = products[x.ProductId].Name,
-                Quantity = x.Quantity,
-                UnitPrice = x.UnitPrice
-            }).ToList()
+            Lines = lines
         };
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        order.FreezeCreatePayload(Fingerprint(input));
         db.Orders.Add(order);
         await db.SaveChangesAsync(ct);
         Audit(order, actor, "CreateOrder");
         await db.SaveChangesAsync(ct);
+        var detail = await DetailAsync(order.Id, ct);
         await tx.CommitAsync(ct);
-        return await DetailAsync(order.Id, ct);
+        return detail;
     }
-    public async Task<OrderDetail> TransitionAsync(int id, string action, OrderVersion input, RequestActor actor, CancellationToken ct)
+    public async Task<OrderDetail> TransitionAsync(int id, string action, OrderVersion input, RequestActor actor, CancellationToken ct, bool canSelfApprove = false, bool canApproveAboveLimit = false)
     {
-        if (action is not ("submit" or "approve" or "cancel"))
+        if (action is not ("submit" or "approve" or "cancel" or "reject" or "return-for-revision"))
             throw ErpException.Invalid("invalid_order_transition", "Thao tác chuyển trạng thái không hợp lệ.");
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await using var tx = await db.BeginDocumentWriteAsync(ct);
         await LockOrderAsync(id, ct);
         var order = await LoadAsync(id, ct);
-        if (action == "cancel" && order.Status == OrderStatus.Cancelled) return await DetailAsync(id, ct);
+        var reason = CatalogRules.OptionalText(input.Reason);
+        if (reason?.Length > 300 || (action is "cancel" or "reject" or "return-for-revision" && reason is null))
+            throw ErpException.Invalid("invalid_reason", "Cần nhập lý do không quá 300 ký tự.");
+        var previous = await db.AuditEntries.Where(x => x.Entity == "Order" && x.EntityId == id.ToString() && x.Result == "Succeeded")
+            .OrderByDescending(x => x.Id).FirstOrDefaultAsync(ct);
+        if (previous?.InputVersion is not null && previous.Action == action + "Order" && previous.InputVersion == input.Version && previous.Reason == reason && previous.UserId == actor.UserId)
+            return await DetailAsync(id, ct);
         if (input.Version != Convert.ToBase64String(order.Version)) throw ErpException.Conflict("stale_version", "Đơn đã thay đổi. Hãy tải lại.");
         if (action == "submit") order.Submit();
+        else if (action == "reject") order.Reject();
+        else if (action == "return-for-revision") order.ReturnForRevision();
         else if (action == "approve")
         {
+            if (order.Status != OrderStatus.PendingApproval)
+                throw ErpException.Conflict("invalid_status", "Trạng thái đơn không phù hợp.");
+            if (!await CanApproveAsync(order, actor.UserId, canSelfApprove, canApproveAboveLimit, ct))
+                throw ErpException.Forbidden("approval_permission_required", "Bạn cần quyền duyệt bổ sung cho đơn này.");
             order.Approve();
             if (order.Kind == OrderKind.Sales)
                 foreach (var line in order.Lines.OrderBy(x => x.ProductId))
@@ -128,6 +133,8 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
         }
         else if (action == "cancel")
         {
+            if (order.Status == OrderStatus.Cancelled)
+                throw ErpException.Conflict("invalid_status", "Đơn đã hủy.");
             order.Cancel();
             foreach (var line in order.Lines.Where(x => x.ReservedQuantity > 0).OrderBy(x => x.ProductId))
             {
@@ -137,10 +144,11 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
         }
         order.UpdatedAtUtc = Now;
         db.Entry(order).Property(x => x.UpdatedAtUtc).IsModified = true;
-        Audit(order, actor, action + "Order");
+        Audit(order, actor, action + "Order", reason, input.Version);
         await db.SaveChangesAsync(ct);
+        var detail = await DetailAsync(id, ct);
         await tx.CommitAsync(ct);
-        return await DetailAsync(id, ct);
+        return detail;
     }
     public async Task<OrderDetail> FulfillAsync(int id, FulfillmentInput input, RequestActor actor, CancellationToken ct)
     {
@@ -148,7 +156,7 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
             input.Lines.Select(x => x.ProductId).Distinct().Count() != input.Lines.Length)
             throw ErpException.Invalid("invalid_fulfillment", "Chọn các dòng hàng khác nhau.");
         foreach (var line in input.Lines) StockBalance.RequirePositive(line.Quantity);
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await using var tx = await db.BeginDocumentWriteAsync(ct);
         await LockOrderAsync(id, ct);
         var order = await LoadAsync(id, ct);
         var previous = await db.OrderFulfillments.SingleOrDefaultAsync(x => x.RequestId == input.RequestId, ct);
@@ -232,12 +240,13 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
         await AddFinanceAsync(order, doc.Id, input.IsReturn, amount, ct);
         Audit(order, actor, input.IsReturn ? "ReturnOrder" : "FulfillOrder");
         await db.SaveChangesAsync(ct);
+        var detail = await DetailAsync(id, ct);
         await tx.CommitAsync(ct);
-        return await DetailAsync(id, ct);
+        return detail;
     }
     public async Task<OrderDetail> ReverseAsync(int id, int fulfillmentId, RequestActor actor, CancellationToken ct)
     {
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await using var tx = await db.BeginDocumentWriteAsync(ct);
         await LockOrderAsync(id, ct);
         var order = await LoadAsync(id, ct);
         var original = await db.OrderFulfillments.SingleOrDefaultAsync(x => x.Id == fulfillmentId && x.OrderId == id, ct)
@@ -277,9 +286,80 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
         });
         await AddFinanceAsync(order, reversal.Document.Id, !original.IsReturn, original.Amount, ct);
         Audit(order, actor, "ReverseFulfillment");
-        await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
-        return await DetailAsync(id, ct);
+        await db.SaveChangesAsync(ct);
+        var detail = await DetailAsync(id, ct);
+        await tx.CommitAsync(ct);
+        return detail;
     }
+    public async Task<bool> CanApproveAsync(int id, Guid? actorId, bool selfApprove, bool aboveLimit, CancellationToken ct)
+        => CanApprove(await DetailAsync(id, ct), actorId, selfApprove, aboveLimit);
+    public bool CanApprove(OrderDetail detail, Guid? actorId, bool selfApprove, bool aboveLimit)
+    {
+        return CanApprove(detail.Order.Status, detail.Order.Total, detail.History ?? [], actorId, selfApprove, aboveLimit);
+    }
+    private bool CanApprove(OrderStatus status, decimal? total, DocumentEvent[] events, Guid? actorId, bool selfApprove, bool aboveLimit)
+    {
+        if (status != OrderStatus.PendingApproval) return false;
+        var creator = events.FirstOrDefault(x => x.Action == "CreateOrder")?.ActorId;
+        var editor = events.LastOrDefault(x => x.Action == "EditOrder")?.ActorId;
+        var submitter = events.LastOrDefault(x => x.Action == "submitOrder")?.ActorId;
+        if (!selfApprove && (creator is null || actorId is null || creator == actorId || editor == actorId || submitter == actorId)) return false;
+        return approvalPolicy?.ThresholdVnd is not { } threshold || total < threshold || aboveLimit;
+    }
+    private async Task<bool> CanApproveAsync(TradeOrder order, Guid? actorId, bool selfApprove, bool aboveLimit, CancellationToken ct)
+        => CanApprove(order.Status, order.Lines.Sum(x => Money.Round(x.Quantity * x.UnitPrice)),
+            await db.DocumentHistoryAsync("Order", order.Id, ct), actorId, selfApprove, aboveLimit);
+    public async Task<OrderDetail> EditAsync(int id, OrderEditInput input, RequestActor actor, CancellationToken ct)
+    {
+        await using var tx = await db.BeginDocumentWriteAsync(ct);
+        await LockOrderAsync(id, ct);
+        var order = await LoadAsync(id, ct);
+        if (input.Version != Convert.ToBase64String(order.Version)) throw ErpException.Conflict("stale_version", "Đơn đã thay đổi. Hãy tải lại.");
+        var next = new OrderInput(order.RequestId, order.Kind, input.PartnerId, input.WarehouseId, input.Note, input.Lines, input.ExpectedDate);
+        Validate(next);
+        var originalHash = Fingerprint(order);
+        if (originalHash == Fingerprint(next)) throw ErpException.Invalid("unchanged_order", "Cần thay đổi nội dung đơn trước khi lưu.");
+        var lines = await BuildLinesAsync(next, ct);
+        order.FreezeCreatePayload(originalHash);
+        order.Edit(input.PartnerId, input.WarehouseId, CatalogRules.OptionalText(input.Note), input.ExpectedDate);
+        db.RemoveRange(order.Lines);
+        await db.SaveChangesAsync(ct);
+        order.Lines.Clear();
+        order.Lines.AddRange(lines);
+        order.UpdatedAtUtc = Now;
+        db.Entry(order).Property(x => x.UpdatedAtUtc).IsModified = true;
+        Audit(order, actor, "EditOrder", inputVersion: input.Version);
+        await db.SaveChangesAsync(ct);
+        var detail = await DetailAsync(id, ct);
+        await tx.CommitAsync(ct);
+        return detail;
+    }
+    private async Task<List<OrderLine>> BuildLinesAsync(OrderInput input, CancellationToken ct)
+    {
+        var ids = input.Lines.Select(x => x.ProductId).ToArray();
+        var products = await db.Products.AsNoTracking().Where(x => ids.Contains(x.Id) && x.IsActive).ToDictionaryAsync(x => x.Id, ct);
+        var partnerKind = input.Kind == OrderKind.Purchase ? PartnerKind.Supplier : PartnerKind.Customer;
+        if (products.Count != ids.Length || !await db.Partners.AnyAsync(x => x.Id == input.PartnerId && x.Kind == partnerKind && x.IsActive, ct) ||
+            !await db.Lookups.AnyAsync(x => x.Id == input.WarehouseId && x.Kind == LookupKind.Warehouse && x.IsActive, ct))
+            throw ErpException.Invalid("invalid_reference", "Chọn đối tác, kho và sản phẩm đang sử dụng.");
+        return input.Lines.Select(x => new OrderLine { ProductId = x.ProductId, Sku = products[x.ProductId].Sku,
+            ProductName = products[x.ProductId].Name, Quantity = x.Quantity, UnitPrice = x.UnitPrice }).ToList();
+    }
+    private static void Validate(OrderInput input)
+    {
+        if (!Enum.IsDefined(input.Kind) || input.RequestId == Guid.Empty || input.Lines is not { Length: >= 1 and <= 50 } ||
+            input.Lines.Any(x => x is null || x.ProductId == Guid.Empty) || input.Lines.Select(x => x.ProductId).Distinct().Count() != input.Lines.Length)
+            throw ErpException.Invalid("invalid_order", "Chọn từ 1 đến 50 sản phẩm khác nhau.");
+        if (CatalogRules.OptionalText(input.Note)?.Length > 300) throw ErpException.Invalid("invalid_note", "Ghi chú tối đa 300 ký tự.");
+        foreach (var line in input.Lines) { StockBalance.RequirePositive(line.Quantity); CatalogRules.NonNegative(line.UnitPrice); }
+        if (input.Lines.Sum(x => Money.Round(x.Quantity * x.UnitPrice)) > 999_999_999_999m)
+            throw ErpException.Invalid("order_total_exceeded", "Tổng tiền đơn vượt giới hạn cho phép.");
+    }
+    private static string Fingerprint(TradeOrder order) => Fingerprint(new OrderInput(order.RequestId, order.Kind, order.PartnerId,
+        order.WarehouseId, order.Note, order.Lines.Select(x => new OrderLineInput(x.ProductId, x.Quantity, x.UnitPrice)).ToArray(), order.ExpectedDate));
+    private static string Fingerprint(OrderInput input) => DocumentFingerprint.Compute(new { input.Kind, input.PartnerId, input.WarehouseId,
+        Note = CatalogRules.OptionalText(input.Note), input.ExpectedDate, Lines = input.Lines.OrderBy(x => x.ProductId).ToArray() });
+    private DateOnly Today => BusinessCalendar.DateAt(Now);
     private async Task AddFinanceAsync(TradeOrder order, int stockId, bool credit, decimal amount, CancellationToken ct)
     {
         var movements = await db.StockMovements.Where(x => x.DocumentId == stockId).Select(x => new { x.ProductId, x.QuantityDelta, x.UnitCost }).ToArrayAsync(ct);
@@ -352,11 +432,14 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
 
     private async Task<TradeOrder> LoadAsync(int id, CancellationToken ct) => await db.Orders.Include(x => x.Lines).Include(x => x.Partner).Include(x => x.Warehouse)
         .SingleOrDefaultAsync(x => x.Id == id, ct) ?? throw ErpException.Missing("order_missing", "Không tìm thấy đơn.");
-    private async Task<StockBalance> BalanceAsync(Guid warehouse, Guid product, CancellationToken ct) =>
-        await db.StockBalances.SingleOrDefaultAsync(x => x.WarehouseId == warehouse && x.ProductId == product, ct)
-        ?? throw ErpException.Conflict("insufficient_stock", "Sản phẩm chưa có tồn tại kho.");
+    private async Task<StockBalance> BalanceAsync(Guid warehouse, Guid product, CancellationToken ct)
+    {
+        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT ProductId FROM inventory.Balances WITH (UPDLOCK,HOLDLOCK) WHERE WarehouseId={warehouse} AND ProductId={product}", ct);
+        return await db.StockBalances.SingleOrDefaultAsync(x => x.WarehouseId == warehouse && x.ProductId == product, ct)
+            ?? throw ErpException.Conflict("insufficient_stock", "Sản phẩm chưa có tồn tại kho.");
+    }
     private DateTime Now => clock.GetUtcNow().UtcDateTime;
-    private void Audit(TradeOrder order, RequestActor actor, string action) => db.AuditEntries.Add(AuditEntry.Create(actor, Now, action, "Order", order.Id.ToString(), after: order.Status.ToString()));
-    private static OrderRow Row(TradeOrder x) => new(x.Id, Number(x.Kind, x.Id), x.Kind, x.Status, x.PartnerId, x.Partner.Name, x.WarehouseId, x.Warehouse.Name,
-        x.Lines.Sum(l => decimal.Round(l.Quantity * l.UnitPrice, 2, MidpointRounding.AwayFromZero)), x.CreatedAtUtc, Convert.ToBase64String(x.Version));
+    private void Audit(TradeOrder order, RequestActor actor, string action, string? reason = null, string? inputVersion = null) => db.AuditEntries.Add(AuditEntry.Create(actor, Now, action, "Order", order.Id.ToString(), after: order.Status.ToString(), reason: reason, inputVersion: inputVersion));
+    private OrderRow Row(TradeOrder x) => new(x.Id, Number(x.Kind, x.Id), x.Kind, x.Status, x.PartnerId, x.Partner.Name, x.WarehouseId, x.Warehouse.Name,
+        x.Lines.Sum(l => decimal.Round(l.Quantity * l.UnitPrice, 2, MidpointRounding.AwayFromZero)), x.CreatedAtUtc, Convert.ToBase64String(x.Version), x.ExpectedDate, x.ExpectedDate < Today && x.Status is OrderStatus.Approved or OrderStatus.Partial);
 }

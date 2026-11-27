@@ -25,6 +25,8 @@ export function permissionLabel(permission: string) {
     'System.Roles': 'Quản lý phân quyền',
     'System.Audit': 'Xem nhật ký hoạt động',
     'Reports.Sensitive': 'Xem báo cáo tài chính',
+    'Orders.SelfApprove': 'Duyệt đơn do chính mình lập, sửa hoặc gửi duyệt',
+    'Orders.ApproveAboveLimit': 'Duyệt đơn vượt hạn mức phê duyệt',
   }
   if (special[permission]) return special[permission]
   const [module = '', action = ''] = permission.split('.')
