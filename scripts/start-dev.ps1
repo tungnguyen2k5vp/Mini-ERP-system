@@ -1,6 +1,8 @@
+param([switch]$TestDatabase)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'local-env.ps1')
-Set-MiniErpLocalEnvironment
+Set-MiniErpLocalEnvironment -Test:$TestDatabase
+$env:ASPNETCORE_ENVIRONMENT = 'Development'
 
 $state = Join-Path $MiniErpWork 'processes.json'
 if (Test-Path -LiteralPath $state) {

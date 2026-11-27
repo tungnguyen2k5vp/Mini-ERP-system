@@ -1,5 +1,31 @@
 # Test report
 
+## V2 milestone 2 · 27 November 2026
+
+| Surface | Observed result |
+| --- | --- |
+| .NET and SQL Server | The build had zero warnings and errors. All 14 unit tests and 59 SQL Server integration tests passed with zero skips. Two Purchasing Staff accounts edited one rowversion through HTTP. Exactly one edit succeeded, the other returned 409, and the persisted header, lines and audit actor matched the winner. A separate writer hit SQL lock timeout 1222 while a caller held an order detail read in a READ COMMITTED transaction, then saved successfully after release. The suite also covered the state matrix, inclusive approval threshold, create/post retries, rollback and scope reuse. |
+| Migration with history | Upgraded the five-migration `MiniErp_Test_V2_Browser` to `20261127025043_DocumentWorkflow`. Eleven table projections had identical counts and SHA-256 digests, including rowversions, 312 orders, 397 stock documents, 498 movements, 386 invoices, 208 payments and 2,093 audit events. The separate digest of three existing attributed sales lines also matched. EF reported no pending model changes. |
+| Browser | All 38 Playwright cases passed in one local run. Chromium ran 20, Firefox and WebKit ran nine each. Each engine exercised review and resubmission, stale edits in two tabs, recount and cancellation, restricted receipt costs, and saving an open editor after its background GET failed. The last check verified the unsaved note, original version and successful PUT. Axe reported zero violations on the order history and financial reconciliation checks. |
+| Responsive UI | The review screen passed page-overflow checks at measured widths of 320, 390, 768, 1024, 1280 and 1440 CSS pixels in all three engines. Editor captures cover 390 and 1280 pixels. The terminal-state screen shows the reason and the action history. [Desktop history](screenshots/v2-workflow-order-workflow-1280.png) · [Mobile history](screenshots/v2-workflow-order-workflow-390.png) · [Order edit](screenshots/v2-workflow-order-editor-1280.png) · [Mobile order edit](screenshots/v2-workflow-order-editor-390.png) · [Stock edit](screenshots/v2-workflow-stock-editor-1280.png) · [Mobile recount](screenshots/v2-workflow-stock-editor-390.png) · [Warehouse receipt edit](screenshots/v2-workflow-warehouse-receipt-editor-390.png) |
+| Frontend and configuration | ESLint, TypeScript, three Vitest tests and Vite build passed. Impeccable's changed-file detector returned no findings. The Vite build emitted the two existing upstream Zod annotation notices. Compose configuration resolved both an unset threshold and the supplied test amount. |
+
+The initial test database installation was verified on a separate `MiniErp_Test_M2_Clean_20261127`. The final SQL regression ran there after the complete schema was present. The local browser suite used the upgraded `MiniErp_Test_V2_Browser`. Its background-read test waits for a failed network request before checking the draft and saving it. An earlier synthetic visibility event did not bubble to the query library's window listener. The corrected event passed on all three engines individually and in the full run.
+
+## V2 milestone 1 · 26 November 2026
+
+| Surface | Observed result |
+| --- | --- |
+| .NET and SQL Server | 12 unit and 47 SQL integration tests passed with zero skips on the migrated test database and on a clean V2 installation. Coverage includes repeat cancellation, linked reversal, exact COGS by SKU, legacy returns, source exceptions, current grants, cent precision, SQL deadlock and HTTP report entry points. |
+| Read consistency | The cancellation test blocked a report behind a test transaction, cancelled it, verified `@@TRANCOUNT=0` on the same physical connection and read again. Stock diagnostics catch opposite line-level reservation errors even when aggregate totals match. |
+| Local time and money | Posted an order across the last 100 ns before a Vietnam year boundary, at midnight and at the end of the next local day. Verified stock, audit, receipt/issue counts, per-SKU revenue, COGS and finance cutoffs. Split receipts, credits and refunds retained a one-cent receivable/payable balance. |
+| Upgrade rehearsal | On `MiniErp_Test_V2_Browser`, compared the same ordered SHA-256 projections of ten business tables before and after migration 5. All matched, including 303 orders, 374 invoices, 202 payments and 474 movements. All 472 prior stock lines kept a null sales-cost snapshot. EF reported no pending model changes. |
+| Browser and accessibility | One local run passed all 23 Playwright cases. Chromium ran 15 including the existing commercial flow and Warehouse screen/print price redaction. Firefox and WebKit each ran four P0 tests using real SQL and API responses. The finance reconciliation screen had zero axe violations for the configured WCAG A/AA tags in all three engines. Windows Firefox used software rendering. |
+| Responsive UI | Checked stock diagnostics, finance exceptions, aging and dashboard at 320, 390, 768, 1024, 1280 and 1440 measured CSS pixels in each engine. The tests captured 72 views and checked document overflow. These [stock](screenshots/v2-p0-stock-390.png), [finance](screenshots/v2-p0-finance-1280.png) and [dashboard](screenshots/v2-p0-dashboard-1280.png) images come from the passing Chromium run. |
+| Frontend | ESLint, TypeScript, 3 Vitest tests and the production Vite build passed. Rollup issued two upstream Zod annotation notices. |
+
+The full V2 roadmap contains later milestones for draft revision, credit limits, payment correction and quotation conversion. The older test counts below refer to V1 checkpoints.
+
 ## 26 November 2026 — integrated ERP
 
 | Check | Observed result |

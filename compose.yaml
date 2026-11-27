@@ -50,6 +50,7 @@ services:
       ConnectionStrings__Erp: Server=sql;Database=MiniErp;User Id=minierp_app;Password=${ERP_DB_PASSWORD:?Set ERP_DB_PASSWORD};Encrypt=True;TrustServerCertificate=True
       Auth__SigningKey: ${ERP_SIGNING_KEY:?Set ERP_SIGNING_KEY}
       Auth__PublicOrigin: ${ERP_PUBLIC_ORIGIN:-http://localhost:5186}
+      Orders__ApprovalThresholdVnd: ${ERP_APPROVAL_THRESHOLD_VND:-}
     depends_on:
       provision:
         condition: service_completed_successfully

@@ -1,5 +1,11 @@
 # SQL Server performance
 
+## V2 stock reconciliation on the seeded test database
+
+A browser request waited 30,042 ms and returned 409. SQL Server DMVs showed `RESOURCE_SEMAPHORE` with `blocking_session_id=0`. The optimizer expanded the same linked-fulfillment aggregate at three references. Materializing it once into a temporary table indexed by order and product kept the comparisons in the same serializable read transaction.
+
+The corrected query received a 5,248 KB memory grant with zero observed grant wait. Representative HTTP reads completed in 158 ms on first use and 28–44 ms on subsequent requests. Cancellation during an independent lock test released the transaction and the same physical connection could read again. These observations cover the local seeded database. The larger V2 benchmark belongs to milestone 8.
+
 ## 26 November 2026, restored development copy
 
 Ran `database/performance/scale-restore.sql` against a fresh SQL Server Developer restore. Within one transaction it added 10,000 catalog products, 10,000 warehouse positions, 100,000 posted receipt lines and 100,000 signed ledger movements. The measured ledger contained 100,104 rows.

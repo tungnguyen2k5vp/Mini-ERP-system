@@ -1,5 +1,7 @@
 # Đọc MiniErp trong 7 ngày
 
+Khi học phần V2, chạy các test có tên `StockReconciliationTests`, `FinanceReconciliationTests` và `ReportingTests` trên `MiniErp_Test*`. Lần theo ba ví dụ: hai dòng giữ hàng sai trái dấu, khoản phải thu 0,01 đồng và lần giao ở ranh giới năm Việt Nam. Đối chiếu SQL với kết quả API, trạng thái React và quyền xem dữ liệu. [Quyết định kỹ thuật](../DECISIONS.md)
+
 | Ngày | Đọc và lần theo luồng | Thực hành |
 | --- | --- | --- |
 | 1 | Program.cs, các .csproj và sơ đồ thành phần. Theo request từ middleware đến route. | Mở OpenAPI, sửa mô tả một route. Tự trả lời framework chọn endpoint và scope DI ở đâu. |

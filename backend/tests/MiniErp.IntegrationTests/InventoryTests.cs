@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using MiniErp.Application;
+using MiniErp.Application.Auth;
 using MiniErp.Application.Catalog;
 using MiniErp.Application.Inventory;
 using MiniErp.Domain.Inventory;
@@ -22,10 +23,15 @@ public sealed class InventoryTests(ErpFixture fixture)
         Assert.Equal(openingId, (await CreateAsync(client, opening)).Document.Id);
         using var reusedKey = await client.PostAsJsonAsync(Root + "/documents", opening with { Note = "different" });
         Assert.Equal(HttpStatusCode.Conflict, reusedKey.StatusCode);
+        using var changedQuantity = await client.PostAsJsonAsync(Root + "/documents", opening with { Lines = [new(product, 101, 100)] });
+        Assert.Equal(HttpStatusCode.Conflict, changedQuantity.StatusCode);
+        using var changedCost = await client.PostAsJsonAsync(Root + "/documents", opening with { Lines = [new(product, 100, 101)] });
+        Assert.Equal(HttpStatusCode.Conflict, changedCost.StatusCode);
         await PostAsync(client, openingId);
         await PostAsync(client, (await CreateAsync(client, opening with
         {
-            RequestId = Guid.NewGuid(), Lines = [new(product, 50, 160)]
+            RequestId = Guid.NewGuid(),
+            Lines = [new(product, 50, 160)]
         })).Document.Id);
         var issue = await DraftAsync(client, StockKind.Issue, source, product, 20);
         await PostAsync(client, issue);
@@ -122,11 +128,149 @@ public sealed class InventoryTests(ErpFixture fixture)
         Assert.Equal(61.3333m, balance.AverageCost);
 
         var issue = await DraftAsync(client, StockKind.Issue, source, product, 4);
-        using var cancel = await client.PostAsync($"{Root}/documents/{issue}/cancel", null);
+        var draft = (await client.GetFromJsonAsync<StockDocumentResponse>($"{Root}/documents/{issue}"))!;
+        using var cancel = await client.PostAsJsonAsync($"{Root}/documents/{issue}/cancel", new StockCancelInput(draft.Document.Version, "Lập nhầm phiếu"));
         Assert.Equal(StockStatus.Cancelled, (await ReadAsync<StockDocumentResponse>(cancel)).Document.Status);
         using var post = await client.PostAsync($"{Root}/documents/{issue}/post", null);
         Assert.Equal(HttpStatusCode.Conflict, post.StatusCode);
         Assert.Equal(6, Assert.Single(await BalancesAsync(client, product)).OnHand);
+    }
+
+    [SqlServerFact]
+    public async Task Draft_edit_versions_replay_and_cancel_are_atomic()
+    {
+        using var client = await fixture.AuthenticatedClientAsync();
+        var (warehouse, _, product) = await SetUpAsync(client);
+        var original = new StockDocumentInput(Guid.NewGuid(), StockKind.Receipt, warehouse, null, null, [new(product, 10, 37)]);
+        var draft = await CreateAsync(client, original);
+        var url = $"{Root}/documents/{draft.Document.Id}";
+        var edit = new StockDocumentEditInput(draft.Document.Version, warehouse, null, "Revised", [new(product, 12, null)]);
+        using var saved = await client.PutAsJsonAsync(url, edit);
+        var revised = await ReadAsync<StockDocumentResponse>(saved);
+        Assert.Equal(37, Assert.Single(revised.Lines).UnitCost);
+        Assert.False(draft.Document.Version.SequenceEqual(revised.Document.Version));
+        Assert.Contains(revised.History, x => x.Action == "EditStockDocument");
+        Assert.Equal(draft.Document.Id, (await CreateAsync(client, original)).Document.Id);
+        using var changedReplay = await client.PostAsJsonAsync(Root + "/documents", original with { Note = "Revised", Lines = [new(product, 12, 37)] });
+        Assert.Equal(HttpStatusCode.Conflict, changedReplay.StatusCode);
+        using var staleEdit = await client.PutAsJsonAsync(url, edit);
+        Assert.Equal(HttpStatusCode.Conflict, staleEdit.StatusCode);
+        using var stalePost = await client.PostAsJsonAsync(url + "/post", new StockPostInput(draft.Document.Version));
+        Assert.Equal(HttpStatusCode.Conflict, stalePost.StatusCode);
+        using var missingVersion = await client.PostAsync(url + "/post", null);
+        Assert.Equal(HttpStatusCode.Conflict, missingVersion.StatusCode);
+        var cancellation = new StockCancelInput(revised.Document.Version, "Duplicate request");
+        using var cancel = await client.PostAsJsonAsync(url + "/cancel", cancellation);
+        var cancelled = await ReadAsync<StockDocumentResponse>(cancel);
+        using var retry = await client.PostAsJsonAsync(url + "/cancel", cancellation);
+        Assert.Single((await ReadAsync<StockDocumentResponse>(retry)).History, x => x.Action == "CancelStockDocument");
+        using var differentReason = await client.PostAsJsonAsync(url + "/cancel", cancellation with { Reason = "Different" });
+        Assert.Equal(HttpStatusCode.Conflict, differentReason.StatusCode);
+        using var terminalPost = await client.PostAsJsonAsync(url + "/post", new StockPostInput(cancelled.Document.Version));
+        Assert.Equal(HttpStatusCode.Conflict, terminalPost.StatusCode);
+        Assert.Empty(await BalancesAsync(client, product));
+    }
+
+    [SqlServerFact]
+    public async Task Count_edit_requires_explicit_recount_and_edit_post_race_never_posts_stale_lines()
+    {
+        using var client = await fixture.AuthenticatedClientAsync();
+        var (warehouse, _, product) = await SetUpAsync(client);
+        await PostAsync(client, await DraftAsync(client, StockKind.Receipt, warehouse, product, 10, unitCost: 5));
+        var count = await CreateAsync(client, new StockDocumentInput(Guid.NewGuid(), StockKind.Count, warehouse, null, "Count", [new(product, 9, null)]));
+        var url = $"{Root}/documents/{count.Document.Id}";
+        var input = new StockDocumentEditInput(count.Document.Version, warehouse, null, "Count again", [new(product, 8, null)]);
+        using var missingRecount = await client.PutAsJsonAsync(url, input);
+        Assert.Equal(HttpStatusCode.Conflict, missingRecount.StatusCode);
+        using var edit = await client.PutAsJsonAsync(url, input with { Recount = true });
+        var refreshed = await ReadAsync<StockDocumentResponse>(edit);
+        using var post = await client.PostAsJsonAsync(url + "/post", new StockPostInput(refreshed.Document.Version));
+        await ReadAsync<StockDocumentResponse>(post);
+        Assert.Equal(8, Assert.Single(await BalancesAsync(client, product)).OnHand);
+
+        var receipt = await CreateAsync(client, new StockDocumentInput(Guid.NewGuid(), StockKind.Receipt, warehouse, null, null, [new(product, 2, 5)]));
+        var raceUrl = $"{Root}/documents/{receipt.Document.Id}";
+        var raceEdit = client.PutAsJsonAsync(raceUrl, new StockDocumentEditInput(receipt.Document.Version, warehouse, null, "Race", [new(product, 3, null)]));
+        var racePost = client.PostAsJsonAsync(raceUrl + "/post", new StockPostInput(receipt.Document.Version));
+        var results = await Task.WhenAll(raceEdit, racePost);
+        try
+        {
+            Assert.Single(results, x => x.StatusCode == HttpStatusCode.OK);
+            Assert.Single(results, x => x.StatusCode == HttpStatusCode.Conflict);
+        }
+        finally { foreach (var result in results) result.Dispose(); }
+        var final = (await client.GetFromJsonAsync<StockDocumentResponse>(raceUrl))!;
+        var balance = Assert.Single(await BalancesAsync(client, product));
+        Assert.Equal(final.Document.Status == StockStatus.Posted ? 10 : 8, balance.OnHand);
+    }
+
+    [SqlServerFact]
+    public async Task Concurrent_create_and_lost_post_response_replay_have_single_effect()
+    {
+        using var client = await fixture.AuthenticatedClientAsync();
+        var (warehouse, _, product) = await SetUpAsync(client);
+        var input = new StockDocumentInput(Guid.NewGuid(), StockKind.Receipt, warehouse, null, null, [new(product, 2, 10)]);
+        var creates = await Task.WhenAll(client.PostAsJsonAsync(Root + "/documents", input),
+            client.PostAsJsonAsync(Root + "/documents", input));
+        StockDocumentResponse first;
+        try
+        {
+            first = await ReadAsync<StockDocumentResponse>(creates[0]);
+            Assert.Equal(first.Document.Id, (await ReadAsync<StockDocumentResponse>(creates[1])).Document.Id);
+        }
+        finally { foreach (var response in creates) response.Dispose(); }
+        var url = $"{Root}/documents/{first.Document.Id}";
+        using var edit = await client.PutAsJsonAsync(url, new StockDocumentEditInput(first.Document.Version,
+            warehouse, null, "Edited before post", [new(product, 3, null)]));
+        var draft = await ReadAsync<StockDocumentResponse>(edit);
+        var postInput = new StockPostInput(draft.Document.Version);
+        using var posted = await client.PostAsJsonAsync(url + "/post", postInput);
+        var result = await ReadAsync<StockDocumentResponse>(posted);
+        using var replay = await client.PostAsJsonAsync(url + "/post", postInput);
+        var repeated = await ReadAsync<StockDocumentResponse>(replay);
+        Assert.Equal(result.Document.Version, repeated.Document.Version);
+        Assert.Single(repeated.History, x => x.Action == "PostStockDocument");
+        Assert.Equal(3, Assert.Single(await BalancesAsync(client, product)).OnHand);
+        var ledger = (await client.GetFromJsonAsync<Page<StockMovementRow>>($"{Root}/history?productId={product}"))!;
+        Assert.Single(ledger.Items);
+    }
+
+    [SqlServerFact]
+    public async Task Warehouse_edit_preserves_hidden_costs_and_viewer_cannot_edit()
+    {
+        using var admin = await fixture.AuthenticatedClientAsync();
+        var (warehouse, _, first) = await SetUpAsync(admin);
+        var (_, _, second) = await SetUpAsync(admin);
+        var draft = await CreateAsync(admin, new StockDocumentInput(Guid.NewGuid(), StockKind.Receipt, warehouse,
+            null, null, [new(first, 2, 73)]));
+        var url = $"{Root}/documents/{draft.Document.Id}";
+        foreach (var role in new[] { "Viewer", "Warehouse Staff" })
+        {
+            var email = $"stock-edit-{Guid.NewGuid():N}@minierp.example";
+            var password = Guid.NewGuid().ToString("N") + "Aa7!";
+            using var account = await admin.PostAsJsonAsync("/api/v1/users", new CreateUserRequest(email, "Stock edit", password, role));
+            Assert.Equal(HttpStatusCode.Created, account.StatusCode);
+            using var user = await fixture.AuthenticatedClientAsync(email, password);
+            var redacted = (await user.GetFromJsonAsync<StockDocumentResponse>(url))!;
+            Assert.Null(Assert.Single(redacted.Lines).UnitCost);
+            var input = new StockDocumentEditInput(redacted.Document.Version, warehouse, null, "Keep costs",
+                [new(first, 4, null), new(second, 1, null)]);
+            using var edit = await user.PutAsJsonAsync(url, input);
+            if (role == "Viewer") Assert.Equal(HttpStatusCode.Forbidden, edit.StatusCode);
+            else
+            {
+                var result = await ReadAsync<StockDocumentResponse>(edit);
+                Assert.All(result.Lines, x => Assert.Null(x.UnitCost));
+                var persisted = (await admin.GetFromJsonAsync<StockDocumentResponse>(url))!;
+                Assert.Equal(73, Assert.Single(persisted.Lines, x => x.ProductId == first).UnitCost);
+                Assert.Equal(100, Assert.Single(persisted.Lines, x => x.ProductId == second).UnitCost);
+                using var explicitCost = await user.PutAsJsonAsync(url, input with
+                {
+                    Version = result.Document.Version, Lines = [new(first, 4, 0)]
+                });
+                Assert.Equal(HttpStatusCode.Forbidden, explicitCost.StatusCode);
+            }
+        }
     }
 
     private static async Task<(Guid Source, Guid Destination, Guid Product)> SetUpAsync(HttpClient client)

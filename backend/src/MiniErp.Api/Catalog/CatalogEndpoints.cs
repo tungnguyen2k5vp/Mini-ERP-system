@@ -13,7 +13,7 @@ internal static class CatalogEndpoints
 {
     public static void MapCatalog(this RouteGroupBuilder api)
     {
-        var products = api.MapGroup("/products").WithTags("Products");
+        var products = api.MapGroup("/products").WithTags("Products").AddEndpointFilter<FinancialFields>();
         products.MapGet("/", async ([AsParameters] Listing query, Guid? categoryId, CatalogService catalog, CancellationToken ct) =>
             Results.Ok(await catalog.ListProductsAsync(query.ToFilter("sku", "salePrice", "minimumStock"), categoryId, ct)))
             .RequireAuthorization(Permissions.ViewCatalog).Produces<Page<ProductResponse>>().WithName("ListProducts");

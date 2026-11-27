@@ -4,11 +4,23 @@ export default defineConfig({
   testDir: './e2e',
   workers: 1,
   use: {
-    ...devices['Desktop Chrome'],
     locale: 'vi-VN',
     timezoneId: 'Asia/Ho_Chi_Minh',
     baseURL: 'http://localhost:5186',
-    channel: process.env.CI ? undefined : 'chrome',
     trace: 'off',
   },
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], channel: process.env.CI ? undefined : 'chrome' } },
+    {
+      name: 'firefox', testMatch: ['**/p0-reconciliation.spec.ts', '**/document-workflow.spec.ts'],
+      use: {
+        ...devices['Desktop Firefox'],
+        // Native GPU composition crashes this Firefox build during axe contrast checks on Windows.
+        launchOptions: process.platform === 'win32' ? { firefoxUserPrefs: {
+          'gfx.webrender.software': true, 'layers.acceleration.disabled': true, 'gfx.webrender.all': false,
+        } } : {},
+      },
+    },
+    { name: 'webkit', testMatch: ['**/p0-reconciliation.spec.ts', '**/document-workflow.spec.ts'], use: devices['Desktop Safari'] },
+  ],
 })

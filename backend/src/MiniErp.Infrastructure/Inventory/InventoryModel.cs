@@ -36,6 +36,8 @@ internal static class InventoryModel
             doc.HasIndex(x => x.ReversesId).IsUnique();
             doc.HasIndex(x => new { x.Kind, x.Id }).IsDescending(false, true);
             doc.Property(x => x.Note).HasMaxLength(300);
+            doc.Property(x => x.CreatePayloadHash).HasMaxLength(64).IsUnicode(false);
+            doc.Property(x => x.IsEdited).HasDefaultValue(false);
             doc.Property(x => x.Version).IsRowVersion();
             doc.HasOne(x => x.Warehouse).WithMany().HasForeignKey(x => new { Kind = x.WarehouseKind, Id = x.WarehouseId })
                 .HasPrincipalKey(x => new { x.Kind, x.Id }).OnDelete(DeleteBehavior.Restrict);
@@ -45,12 +47,17 @@ internal static class InventoryModel
         });
         model.Entity<StockLine>(line =>
         {
-            line.ToTable("DocumentLines", "inventory", t => t.HasCheckConstraint("CK_StockLines_Cost", "[UnitCost] IS NULL OR [UnitCost] >= 0"));
+            line.ToTable("DocumentLines", "inventory", t =>
+            {
+                t.HasCheckConstraint("CK_StockLines_Cost", "[UnitCost] IS NULL OR [UnitCost] >= 0");
+                t.HasCheckConstraint("CK_StockLines_PostedSalesCost", "[PostedSalesCost] IS NULL OR [PostedSalesCost] >= 0");
+            });
             line.HasKey(x => new { x.DocumentId, x.ProductId });
             line.Property(x => x.Sku).HasMaxLength(32).IsUnicode(false);
             line.Property(x => x.ProductName).HasMaxLength(160);
             line.Property(x => x.CountVersion).HasMaxLength(8);
             Precision(line, nameof(StockLine.Quantity), nameof(StockLine.UnitCost));
+            line.Property(x => x.PostedSalesCost).HasPrecision(19, 2);
             line.HasOne<StockDocument>().WithMany(x => x.Lines).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Restrict);
             line.HasOne<Product>().WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
         });

@@ -74,16 +74,21 @@ public sealed class StockBalance
 
 public sealed class StockDocument
 {
+    private Guid _warehouseId;
+    private Guid? _destinationId;
+    private string? _note;
     public int Id { get; private set; }
     public Guid RequestId { get; init; }
     public StockKind Kind { get; init; }
     public StockStatus Status { get; private set; } = StockStatus.Draft;
     public LookupKind WarehouseKind { get; private set; } = LookupKind.Warehouse;
-    public Guid WarehouseId { get; init; }
+    public Guid WarehouseId { get => _warehouseId; init => _warehouseId = value; }
     public CatalogLookup Warehouse { get; private set; } = null!;
-    public Guid? DestinationId { get; init; }
+    public Guid? DestinationId { get => _destinationId; init => _destinationId = value; }
     public CatalogLookup? Destination { get; private set; }
-    public string? Note { get; init; }
+    public string? Note { get => _note; init => _note = value; }
+    public string? CreatePayloadHash { get; private set; }
+    public bool IsEdited { get; private set; }
     public int? ReversesId { get; init; }
     public DateTime CreatedAtUtc { get; init; }
     public DateTime? PostedAtUtc { get; private set; }
@@ -95,6 +100,17 @@ public sealed class StockDocument
         RequireDraft();
         PostedAtUtc = utc;
         Status = StockStatus.Posted;
+    }
+
+    public void FreezeCreatePayload(string hash) => CreatePayloadHash ??= hash;
+
+    public void Edit(Guid warehouseId, Guid? destinationId, string? note)
+    {
+        RequireDraft();
+        _warehouseId = warehouseId;
+        _destinationId = destinationId;
+        _note = note;
+        IsEdited = true;
     }
 
     public void Cancel()
@@ -120,7 +136,6 @@ public sealed class StockDocument
         }
     }
 }
-
 public sealed class StockLine
 {
     public int DocumentId { get; private set; }
@@ -129,7 +144,18 @@ public sealed class StockLine
     public string ProductName { get; init; } = "";
     public decimal Quantity { get; init; }
     public decimal? UnitCost { get; init; }
+    public decimal? PostedSalesCost { get; private set; }
     public byte[]? CountVersion { get; init; }
+
+    public void AttributeSalesCost(decimal amount)
+    {
+        CatalogRules.NonNegative(amount);
+        if (decimal.Round(amount, 2) != amount)
+            throw ErpException.Invalid("invalid_sales_cost", "Giá vốn ghi nhận cần tối đa 2 chữ số thập phân.");
+        if (PostedSalesCost is { } existing && existing != amount)
+            throw ErpException.Conflict("sales_cost_already_recorded", "Không thể sửa giá vốn đã ghi nhận.");
+        PostedSalesCost = amount;
+    }
 }
 
 public sealed class StockMovement

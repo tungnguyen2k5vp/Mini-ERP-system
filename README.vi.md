@@ -2,9 +2,11 @@
 
 Ứng dụng cho doanh nghiệp phân phối, dùng ASP.NET Core 10, SQL Server và React. Một lần nhận hàng hoặc giao hàng cập nhật đồng thời đơn, số dư kho, sổ kho và hóa đơn nội bộ. Bộ phận tài chính có thể phân bổ tiền theo hóa đơn, theo dõi tuổi nợ và đối soát đến chứng từ nguồn. [Bàn giao](docs/HANDOVER.md) · [Kết quả kiểm thử](docs/TEST_REPORT.md)
 
-![Tổng quan hoạt động từ cơ sở dữ liệu thật](docs/screenshots/dashboard-desktop.png)
+V2 bổ sung đối soát theo từng vị trí kho và chứng từ tài chính, giá vốn theo dòng bán và mốc chốt ngày Việt Nam. Mở **Báo cáo tồn kho → Đối soát hiện tại** hoặc **Công nợ & thanh toán → Đối soát** để thử. [Kế hoạch V2](docs/UPGRADE_V2_PLAN.md) · [Quyền theo API](docs/API_PERMISSION_MATRIX.md)
 
-**Thử luồng nghiệp vụ** trong mục Đơn mua hoặc Đơn bán. Chọn đối tác, gửi duyệt và nhập hoặc giao một phần. Từ dòng thực hiện, mở phiếu kho, kiểm tra công nợ và ghi thanh toán. Có thể tra cứu sản phẩm bằng SKU, nhập và xuất danh mục Excel, rồi dùng chức năng in của trình duyệt để lưu PDF.
+![Tổng quan hoạt động từ cơ sở dữ liệu thật](docs/screenshots/v2-p0-dashboard-1280.png)
+
+**Thử luồng duyệt** trong mục Đơn mua hoặc Đơn bán. Nhập ngày giao/nhận dự kiến, gửi duyệt, rồi dùng tài khoản quản lý khác để yêu cầu sửa. Sửa đơn nháp, gửi lại và xem lý do cùng người xử lý trong lịch sử. Khi đơn đã duyệt, có thể giao hoặc nhận từng phần và theo dõi công nợ từ chứng từ nguồn. [Quy trình và quyền duyệt](docs/BUSINESS_WORKFLOWS.md)
 
 Trong D:/ReactJS/MiniErp, chạy:
 

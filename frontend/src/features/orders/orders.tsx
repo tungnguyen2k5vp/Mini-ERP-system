@@ -1,3 +1,4 @@
+import { ConflictNotice, DocumentTimeline } from '../../components/document-workflow'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Plus, Printer, Search, Trash2 } from 'lucide-react'
 import type { SortingState } from '@tanstack/react-table'
@@ -17,7 +18,7 @@ import { api, json, type Page, type Profile } from '../../lib/api'
 import { queryClient } from '../../lib/query'
 import { useDebouncedValue } from '../../lib/use-debounced-value'
 
-import { date, money } from '../../lib/format'
+import { calendarDate, date, money } from '../../lib/format'
 type Order = {
   id: number
   number: string
@@ -25,8 +26,11 @@ type Order = {
   status: number
   partnerId: string
   partnerName: string
+  warehouseId: string
+  expectedDate: string | null
+  isOverdue: boolean
   warehouseName: string
-  total: number
+  total: number | null
   createdAtUtc: string
   version: string
 }
@@ -35,12 +39,14 @@ type Line = {
   sku: string
   productName: string
   quantity: number
-  unitPrice: number
+  unitPrice: number | null
   fulfilledQuantity: number
   returnedQuantity: number
   reservedQuantity: number
 }
 type Detail = {
+  canApprove?: boolean
+  history?: { action: string; atUtc: string; actorId: string; actorName: string; reason: string | null }[]
   order: Order
   note: string | null
   lines: Line[]
@@ -50,10 +56,10 @@ type Detail = {
     isReturn: boolean
     reversesId: number | null
     createdAtUtc: string
-    amount: number
+    amount: number | null
   }[]
 }
-const statuses = ['', 'Nháp', 'Chờ duyệt', 'Đã duyệt', 'Thực hiện một phần', 'Hoàn thành', 'Đã hủy']
+const statuses = ['', 'Nháp', 'Chờ duyệt', 'Đã duyệt', 'Thực hiện một phần', 'Hoàn thành', 'Đã hủy', 'Từ chối', 'Yêu cầu sửa']
 const base = (kind: number) => (kind === 1 ? '/mua-hang' : '/ban-hang')
 const prefix = (kind: number) => (kind === 1 ? 'Purchasing' : 'Sales')
 function useOrderOptions(kind: number) {
@@ -67,7 +73,7 @@ function useOrderOptions(kind: number) {
           id: string
           sku: string
           name: string
-          purchasePrice: number
+          purchasePrice: number | null
           salePrice: number
         }[]
       }>('/orders/options?kind=' + kind, { signal }),
@@ -77,7 +83,7 @@ export function OrderBadge({ status }: { status: number }) {
   return (
     <span
       className={
-        'badge ' + (status === 5 ? 'badge-good' : status === 6 ? 'badge-neutral' : 'badge-warn')
+        'badge ' + (status === 5 ? 'badge-good' : status === 7 ? 'badge-error' : status === 8 ? 'badge-revision' : status === 6 ? 'badge-neutral' : 'badge-warn')
       }
     >
       {statuses[status]}
@@ -86,14 +92,25 @@ export function OrderBadge({ status }: { status: number }) {
 }
 
 export function OrdersPage({ kind, profile }: { kind: number; profile: Profile }) {
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
   const [page, setPage] = useState(1)
   const options = useOrderOptions(kind)
   const partners = { ...options, data: options.data?.partners }
-  const [partnerId, setPartner] = useState(params.get('partnerId') ?? '')
+  const partnerId = params.get('partnerId') ?? ''
   const [text, setText] = useState('')
   const search = useDebouncedValue(text)
-  const [status, setStatus] = useState(params.get('status') ?? '')
+  const onlyOverdue = params.get('overdue') === 'true' || params.get('onlyOverdue') === 'true'
+  const status = params.get('status') ?? ''
+  function filter(name: string, value: string) {
+    setParams(previous => {
+      const next = new URLSearchParams(previous)
+      if (name === 'onlyOverdue') next.delete('overdue')
+      if (value) next.set(name, value)
+      else next.delete(name)
+      return next
+    })
+    setPage(1)
+  }
   const [sorting, setSorting] = useState<SortingState>([{ id: 'createdAtUtc', desc: true }])
   const parameters = new URLSearchParams({
     kind: String(kind),
@@ -105,6 +122,7 @@ export function OrdersPage({ kind, profile }: { kind: number; profile: Profile }
   })
   if (partnerId) parameters.set('partnerId', partnerId)
   if (status) parameters.set('status', status)
+  if (onlyOverdue) parameters.set('onlyOverdue', 'true')
   const query = useQuery({
     queryKey: ['orders', kind, parameters.toString()],
     queryFn: ({ signal }) => api<Page<Order>>('/orders?' + parameters, { signal }),
@@ -146,7 +164,7 @@ export function OrdersPage({ kind, profile }: { kind: number; profile: Profile }
           <select
             value={partnerId}
             onChange={(e) => {
-              setPartner(e.target.value)
+              filter('partnerId', e.target.value)
               setPage(1)
             }}
           >
@@ -163,7 +181,7 @@ export function OrdersPage({ kind, profile }: { kind: number; profile: Profile }
           <select
             value={status}
             onChange={(e) => {
-              setStatus(e.target.value)
+              filter('status', e.target.value)
               setPage(1)
             }}
           >
@@ -175,6 +193,7 @@ export function OrdersPage({ kind, profile }: { kind: number; profile: Profile }
             ))}
           </select>
         </label>
+        <label className="checkbox-row"><input type="checkbox" checked={onlyOverdue} onChange={e => { filter('onlyOverdue', e.target.checked ? 'true' : '') }} /> Chỉ đơn quá hạn</label>
       </div>
       <ErrorNotice error={query.error ?? partners.error} />
       {query.isPending ? (
@@ -203,6 +222,7 @@ export function OrdersPage({ kind, profile }: { kind: number; profile: Profile }
               },
               { accessorKey: 'partnerName', header: 'Đối tác', enableSorting: false },
               { accessorKey: 'warehouseName', header: 'Kho', enableSorting: false },
+              { accessorKey: 'expectedDate', header: 'Ngày dự kiến', enableSorting: false, cell: ({ row }) => <>{row.original.expectedDate ? calendarDate(row.original.expectedDate) : '—'} {row.original.isOverdue && <span className="badge badge-warn">Quá hạn</span>}</> },
               {
                 accessorKey: 'status',
                 header: 'Trạng thái',
@@ -211,6 +231,8 @@ export function OrdersPage({ kind, profile }: { kind: number; profile: Profile }
               {
                 accessorKey: 'total',
                 header: 'Giá trị (VND)',
+                enableSorting: kind === 2 || profile.permissions.some(p =>
+                  ['Reports.Sensitive', 'Purchasing.Create', 'Purchasing.Approve'].includes(p)),
                 cell: ({ row }) => <span className="number">{money(row.original.total)}</span>,
               },
               {
@@ -226,7 +248,7 @@ export function OrdersPage({ kind, profile }: { kind: number; profile: Profile }
   )
 }
 
-export function OrderForm({ kind }: { kind: number }) {
+export function OrderForm({ kind, initial, onSaved, onReload }: { kind: number; initial?: Detail; onSaved?: () => void; onReload?: () => void }) {
   const navigate = useNavigate()
   const request = useRef({ id: crypto.randomUUID(), signature: '' })
   const [dirty, setDirty] = useState(false)
@@ -236,14 +258,16 @@ export function OrderForm({ kind }: { kind: number }) {
       e.returnValue = true
     }
   })
-  const [lines, setLines] = useState([{ productId: '', quantity: 1, unitPrice: 0 }])
+  const [lines, setLines] = useState(initial?.lines.map(l => ({ productId: l.productId, quantity: l.quantity, unitPrice: l.unitPrice ?? 0 })) ?? [{ productId: '', quantity: 1, unitPrice: 0 }])
   const options = useOrderOptions(kind)
   const partners = { ...options, data: options.data?.partners }
   const warehouses = { ...options, data: options.data?.warehouses }
   const products = { ...options, data: options.data?.products }
   const save = useMutation({
-    mutationFn: (value: object) => api<Detail>('/orders', json('POST', value)),
+    mutationFn: (value: object) => api<Detail>(initial ? '/orders/' + initial.order.id : '/orders', json(initial ? 'PUT' : 'POST', value)),
     onSuccess: (result) => {
+      setDirty(false)
+      onSaved?.()
       void queryClient.invalidateQueries({ queryKey: ['orders'] })
       void navigate(base(kind) + '/' + result.order.id)
     },
@@ -252,16 +276,16 @@ export function OrderForm({ kind }: { kind: number }) {
     e.preventDefault()
     const form = new FormData(e.currentTarget)
     const body = {
-      kind,
       partnerId: form.get('partnerId'),
       warehouseId: form.get('warehouseId'),
       note: form.get('note'),
+      expectedDate: form.get('expectedDate') || null,
       lines,
     }
     const signature = JSON.stringify(body)
     if (request.current.signature !== signature)
       request.current = { id: crypto.randomUUID(), signature }
-    save.mutate({ ...body, requestId: request.current.id })
+    save.mutate(initial ? { ...body, version: initial.order.version } : { ...body, kind, requestId: request.current.id })
   }
   return (
     <>
@@ -270,7 +294,7 @@ export function OrderForm({ kind }: { kind: number }) {
       </Link>
       <header className="page-heading">
         <div>
-          <h1>Lập đơn {kind === 1 ? 'mua' : 'bán'} hàng</h1>
+          <h1>{initial ? 'Sửa đơn' : 'Lập đơn'} {kind === 1 ? 'mua' : 'bán'} hàng</h1>
           <p className="page-description">Đơn nháp chưa tác động đến tồn kho hoặc công nợ.</p>
         </div>
       </header>
@@ -283,7 +307,7 @@ export function OrderForm({ kind }: { kind: number }) {
             <div className="form-grid">
               <div className="field">
                 <label htmlFor="order-partner">{kind === 1 ? 'Nhà cung cấp' : 'Khách hàng'}</label>
-                <select id="order-partner" name="partnerId" required>
+                <select id="order-partner" name="partnerId" defaultValue={initial?.order.partnerId} required>
                   <option value="">Chọn đối tác</option>
                   {partners.data
                     ?.filter((p) => p.isActive)
@@ -296,7 +320,7 @@ export function OrderForm({ kind }: { kind: number }) {
               </div>
               <div className="field">
                 <label htmlFor="order-warehouse">Kho thực hiện</label>
-                <select id="order-warehouse" name="warehouseId" required>
+                <select id="order-warehouse" name="warehouseId" defaultValue={initial?.order.warehouseId} required>
                   <option value="">Chọn kho</option>
                   {warehouses.data?.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -307,7 +331,9 @@ export function OrderForm({ kind }: { kind: number }) {
               </div>
               <div className="field">
                 <label htmlFor="order-note">Ghi chú</label>
-                <input id="order-note" name="note" maxLength={300} />
+                <input id="order-note" name="note" maxLength={300} defaultValue={initial?.note ?? ''} />
+              </div>
+              <div className="field"><label htmlFor="order-expected">Ngày dự kiến</label><input id="order-expected" name="expectedDate" type="date" defaultValue={initial?.order.expectedDate?.slice(0, 10) ?? ''} />
               </div>
             </div>
             <fieldset className="stock-lines">
@@ -417,10 +443,14 @@ export function OrderForm({ kind }: { kind: number }) {
               </strong>
             </div>
             <ErrorNotice error={save.error} />
+            {save.error && initial && <ConflictNotice onReload={() => onReload?.()} /> }
             <div className="form-actions">
-              <Button asChild variant="outline">
-                <Link to={base(kind)}>Hủy</Link>
-              </Button>
+              <Button type="button" variant="outline" onClick={() => {
+                if (!dirty || window.confirm('Bỏ thay đổi chưa lưu?')) {
+                  if (onSaved) onSaved()
+                  else void navigate(base(kind))
+                }
+              }}>Hủy</Button>
               <Button disabled={save.isPending}>
                 {save.isPending ? 'Đang lưu…' : 'Lưu đơn nháp'}
               </Button>
@@ -434,6 +464,15 @@ export function OrderForm({ kind }: { kind: number }) {
 
 export function OrderDetail({ kind, profile }: { kind: number; profile: Profile }) {
   const { id } = useParams()
+  return <OrderDetailContent key={id} kind={kind} profile={profile} />
+}
+
+function OrderDetailContent({ kind, profile }: { kind: number; profile: Profile }) {
+  const { id } = useParams()
+  const [editing, setEditing] = useState<Detail | null>(null)
+  const [reason, setReason] = useState('')
+  const [reasonAction, setReasonAction] = useState('')
+  const [reasonVersion, setReasonVersion] = useState('')
   const [isReturn, setReturn] = useState(false)
   const [quantities, setQuantities] = useState<Record<string, string>>({})
   const [requestId, setRequestId] = useState(() => crypto.randomUUID())
@@ -449,11 +488,14 @@ export function OrderDetail({ kind, profile }: { kind: number; profile: Profile 
       setRequestId(crypto.randomUUID())
       setQuantities({})
       setSuccess('Đã cập nhật chứng từ.')
+      setReasonAction('')
+      setReason('')
       void queryClient.invalidateQueries()
     },
   })
   if (query.isPending) return <Loading />
   if (!query.data) return <ErrorNotice error={query.error} />
+  if (editing) return <OrderForm key={editing.order.id} kind={kind} initial={editing} onSaved={() => setEditing(null)} onReload={() => { void query.refetch().then(result => { if (result.isSuccess) setEditing(null) }) }} />
   const { order, lines, fulfillments } = query.data
   if (order.kind !== kind) return <Navigate to={base(order.kind) + '/' + id} replace />
   const returning = isReturn || order.status === 5 || order.status === 6
@@ -510,17 +552,22 @@ export function OrderDetail({ kind, profile }: { kind: number; profile: Profile 
           {success}
         </p>
       )}
-      <ol className="workflow" aria-label="Tiến trình đơn hàng">
+      {[6, 7, 8].includes(order.status) ? <section className="panel section-gap" aria-label="Kết quả xét duyệt">
+        <h2>{statuses[order.status]}</h2>
+        {query.data.history?.findLast(entry => entry.reason)?.reason &&
+          <p>{query.data.history.findLast(entry => entry.reason)?.reason}</p>}
+        <p className="muted">{order.status === 8 ? 'Sửa đơn nháp để cập nhật nội dung và gửi duyệt lại.' : order.status === 7 ? 'Đơn đã bị từ chối và không tiếp tục thực hiện.' : 'Phần chưa thực hiện đã dừng; lịch sử đã ghi sổ được giữ lại.'}</p>
+      </section> : <ol className="workflow" aria-label="Tiến trình đơn hàng">
         {[1, 2, 3, 4, 5].map((s) => (
           <li
             key={s}
             aria-current={order.status === s ? 'step' : undefined}
-            className={order.status >= s && order.status !== 6 ? 'reached' : ''}
+            className={order.status >= s && order.status <= 5 ? 'reached' : ''}
           >
             {statuses[s]}
           </li>
         ))}
-      </ol>
+      </ol>}
       <section className="panel document-summary">
         <div className="summary-strip">
           <div>
@@ -537,6 +584,7 @@ export function OrderDetail({ kind, profile }: { kind: number; profile: Profile 
           </div>
         </div>
         <div className="form-actions">
+          {[1, 8].includes(order.status) && allowed('Create') && <Button variant="outline" onClick={() => setEditing(query.data)}>Sửa đơn nháp</Button>}
           {order.status === 1 && allowed('Create') && (
             <Button
               disabled={action.isPending}
@@ -545,7 +593,7 @@ export function OrderDetail({ kind, profile }: { kind: number; profile: Profile 
               Gửi duyệt
             </Button>
           )}
-          {order.status === 2 && allowed('Approve') && (
+          {order.status === 2 && allowed('Approve') && query.data.canApprove !== false && (
             <Button
               disabled={action.isPending}
               onClick={() =>
@@ -561,22 +609,29 @@ export function OrderDetail({ kind, profile }: { kind: number; profile: Profile 
               Phê duyệt đơn
             </Button>
           )}
-          {order.status < 5 && allowed('Cancel') && (
-            <Button
-              variant="outline"
-              disabled={action.isPending}
-              onClick={() =>
-                post(
-                  '/cancel',
-                  { version: order.version },
-                  'Hủy phần chưa thực hiện và giải phóng hàng đang giữ?',
-                )
-              }
-            >
-              Hủy đơn
-            </Button>
-          )}
+          {order.status === 2 && allowed('Approve') && <>
+            <Button variant="outline" disabled={action.isPending} onClick={() => { setReason(''); setReasonVersion(order.version); setReasonAction('reject') }}>Từ chối</Button>
+            <Button variant="outline" disabled={action.isPending} onClick={() => { setReason(''); setReasonVersion(order.version); setReasonAction('return-for-revision') }}>Yêu cầu sửa</Button>
+          </>}
+          {[1, 2, 3, 4, 8].includes(order.status) && allowed('Cancel') &&
+            <Button variant="outline" disabled={action.isPending} onClick={() => { setReason(''); setReasonVersion(order.version); setReasonAction('cancel') }}>Hủy đơn</Button>}
         </div>
+        {order.status === 2 && allowed('Approve') && query.data.canApprove === false &&
+          <p className="muted">Đơn cần người duyệt độc lập hoặc người có quyền duyệt theo hạn mức.</p>}
+        {reasonAction && <form className="form-stack section-gap" onSubmit={e => {
+          e.preventDefault()
+          if (reason.trim()) post('/' + reasonAction, { version: reasonVersion, reason: reason.trim() }, 'Xác nhận thay đổi trạng thái đơn hàng?')
+        }}>
+          <div className="field">
+            <label htmlFor="order-action-reason">Lý do {reasonAction === 'cancel' ? 'hủy đơn' : reasonAction === 'reject' ? 'từ chối' : 'yêu cầu sửa'}</label>
+            <textarea id="order-action-reason" required maxLength={300} value={reason} onChange={e => setReason(e.target.value)} />
+          </div>
+          <div className="form-actions">
+            <Button disabled={action.isPending || !reason.trim()}>Xác nhận</Button>
+            <Button type="button" variant="outline" onClick={() => { setReasonAction(''); setReason('') }}>Đóng</Button>
+          </div>
+        </form>}
+        {order.expectedDate && <p>Ngày dự kiến: {calendarDate(order.expectedDate)} {order.isOverdue && <span className="badge badge-warn">Quá hạn</span>}</p>}
         {query.data.note && <p className="muted section-gap">{query.data.note}</p>}
       </section>
       <div className="table-panel">
@@ -698,12 +753,13 @@ export function OrderDetail({ kind, profile }: { kind: number; profile: Profile 
           </form>
         </section>
       )}
+      <DocumentTimeline title="Lịch sử phê duyệt" history={query.data.history} />
       <section className="panel section-gap">
         <h2>Lịch sử thực hiện</h2>
         {fulfillments.length === 0 ? (
-          <p className="muted">Chưa có phiếu thực hiện. Duyệt đơn để bắt đầu.</p>
+          <p className="muted">{[6, 7].includes(order.status) ? 'Đơn đã kết thúc và chưa có phiếu thực hiện.' : order.status === 8 ? 'Chưa có phiếu thực hiện. Sửa đơn rồi gửi duyệt lại.' : 'Chưa có phiếu thực hiện. Duyệt đơn để bắt đầu.'}</p>
         ) : (
-          <ol className="document-timeline">
+          <ol className="document-timeline" aria-label="Lịch sử thực hiện">
             {fulfillments.map((f) => (
               <li key={f.id}>
                 <div>

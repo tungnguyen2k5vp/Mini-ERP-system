@@ -12,7 +12,8 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test --project=chromium",
+    "test:e2e:cross": "playwright test --project=firefox --project=webkit"
   },
   "dependencies": {
     "@fontsource/be-vietnam-pro": "5.3.0",

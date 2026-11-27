@@ -25,14 +25,17 @@ export function permissionLabel(permission: string) {
     'System.Roles': 'Quản lý phân quyền',
     'System.Audit': 'Xem nhật ký hoạt động',
     'Reports.Sensitive': 'Xem báo cáo tài chính',
+    'Orders.SelfApprove': 'Duyệt đơn do chính mình lập, sửa hoặc gửi duyệt',
+    'Orders.ApproveAboveLimit': 'Duyệt đơn vượt hạn mức phê duyệt',
   }
   if (special[permission]) return special[permission]
   const [module = '', action = ''] = permission.split('.')
   return modules[module] && actions[action] ? actions[action] + ' ' + modules[module] : permission
 }
 
-export const formatMoney = new Intl.NumberFormat('vi-VN', {
+const currencyFormat = new Intl.NumberFormat('vi-VN', {
   style: 'currency', currency: 'VND', minimumFractionDigits: 0, maximumFractionDigits: 4,
 }).format
+export const formatMoney = (value: number | null) => value === null ? '—' : currencyFormat(value)
 
 export const formatQuantity = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 4 }).format

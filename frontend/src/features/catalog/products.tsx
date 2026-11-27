@@ -23,7 +23,7 @@ const prices = [
 
 type Product = CatalogRecord & {
   sku: string; name: string; categoryId: string; categoryName: string; unitId: string; unitName: string
-  purchasePrice: number; salePrice: number; minimumStock: number; description: string | null; imageUrl: string | null
+  purchasePrice: number | null; salePrice: number; minimumStock: number; description: string | null; imageUrl: string | null
   createdAt: string; updatedAt: string
 }
 
@@ -104,6 +104,7 @@ export function ProductForm() {
   const query = useProduct(id)
   if (id && query.isPending) return <Loading />
   if (query.isError) return <ErrorNotice error={query.error} />
+  if (id && query.data?.purchasePrice === null) return <p role="alert">Chưa tải được giá để chỉnh sửa. Hãy tải lại trang.</p>
   return <ProductEditor key={query.data?.id ?? 'new'} product={query.data} />
 }
 

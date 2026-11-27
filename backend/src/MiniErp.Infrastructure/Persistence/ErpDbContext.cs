@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using MiniErp.Application;
 using MiniErp.Domain.Catalog;
 using MiniErp.Domain.Inventory;
 using MiniErp.Infrastructure.Auth;
@@ -27,6 +28,18 @@ public sealed class ErpDbContext(DbContextOptions<ErpDbContext> options)
     public DbSet<TradeOrder> Orders => Set<TradeOrder>();
     public DbSet<OrderLine> OrderLines => Set<OrderLine>();
     public DbSet<OrderFulfillment> OrderFulfillments => Set<OrderFulfillment>();
+
+    public Task<DocumentEvent[]> DocumentHistoryAsync(string entity, int id, CancellationToken ct)
+    {
+        var key = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return (from entry in AuditEntries
+                join user in Users on entry.UserId equals user.Id into actors
+                from user in actors.DefaultIfEmpty()
+                where entry.Entity == entity && entry.EntityId == key && entry.Result == "Succeeded"
+                orderby entry.Id
+                select new DocumentEvent(entry.Action, entry.TimestampUtc, entry.UserId,
+                    user == null ? null : user.DisplayName, entry.Reason)).ToArrayAsync(ct);
+    }
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -67,6 +80,9 @@ public sealed class ErpDbContext(DbContextOptions<ErpDbContext> options)
             audit.Property(x => x.Result).HasMaxLength(20).IsRequired();
             audit.Property(x => x.Before).HasMaxLength(1000);
             audit.Property(x => x.After).HasMaxLength(1000);
+            audit.Property(x => x.Reason).HasMaxLength(300);
+            audit.Property(x => x.InputVersion).HasMaxLength(12).IsUnicode(false);
+            audit.HasIndex(x => new { x.Entity, x.EntityId, x.Id });
             audit.HasIndex(x => new { x.TimestampUtc, x.Id }).IsDescending();
         });
     }

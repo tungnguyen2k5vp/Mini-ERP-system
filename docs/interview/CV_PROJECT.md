@@ -10,6 +10,9 @@ Mini ERP for purchasing, sales, multi-warehouse inventory and operational financ
 
 ## CV bullet points
 
+- Built source-level stock and finance reconciliation in SQL Server, including independent per-line reservation checks, cash-backed refund diagnostics and permissioned cost exceptions.
+- Preserved historical ERP records while introducing per-SKU COGS snapshots. Rehearsed the migration on populated V1 data and verified ten business tables by SHA-256.
+
 - Built versioned .NET 10 APIs and a Vietnamese React interface for catalog, partners, role administration and inventory.
 - Implemented transactional stock posting, document-linked reversals and moving weighted-average costing with EF Core.
 - Enforced SQL Server referential integrity, unique business keys and optimistic concurrency via rowversion.

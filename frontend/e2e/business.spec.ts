@@ -80,7 +80,7 @@ test('purchase partial receipt, payable allocation, return and refund through no
   page.once('dialog', (dialog) => void dialog.accept())
   await page.getByRole('button', { name: 'Ghi sổ trả hàng' }).click()
   await expect(
-    page.getByRole('list').filter({ has: page.getByText('Trả hàng', { exact: true }) }),
+    page.getByRole('list', { name: 'Lịch sử thực hiện' }).getByText('Trả hàng', { exact: true }),
   ).toBeVisible()
   await page.goto('/tai-chinh')
   await page.getByLabel('Loại công nợ').selectOption('2')
@@ -153,7 +153,7 @@ test('sales reserve and partial shipment, mobile business workspaces and accessi
   await expect(page.getByRole('heading', { name: 'Tổng quan hoạt động' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Cần xử lý' })).toBeVisible()
   const firstDay = page
-    .getByRole('group', { name: 'Biểu đồ số lượng nhập xuất theo ngày' })
+    .getByRole('group', { name: 'Số phiếu nhập và phiếu xuất theo ngày' })
     .getByRole('button')
     .first()
   await firstDay.focus()

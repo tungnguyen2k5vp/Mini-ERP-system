@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using MiniErp.Api.Auth;
 using MiniErp.Application;
 using MiniErp.Application.Auth;
@@ -16,7 +17,7 @@ internal static class FinanceEndpoints
         {
             var (number, size) = ApiPaging.Validate(page, pageSize);
             return Results.Ok(await service.InvoicesAsync(direction, partnerId, number, size, ct,invoiceId));
-        }).Produces<Page<InvoiceRow>>();
+        }).AddEndpointFilter<FinancialFields>().Produces<Page<InvoiceRow>>();
         group.MapGet("/options",async(FinanceDirection direction,FinanceService service,CancellationToken ct)=>
             Results.Ok(await service.OptionsAsync(direction,ct))).Produces<FinanceOptions>();
         group.MapGet("/payments", async (FinanceDirection? direction,Guid? partnerId,int? page, int? pageSize, FinanceService service, CancellationToken ct) =>
@@ -26,9 +27,15 @@ internal static class FinanceEndpoints
         }).Produces<Page<PaymentRow>>();
         group.MapPost("/payments", async (PaymentInput input, HttpContext http, FinanceService service, CancellationToken ct) =>
             Results.Ok(await service.PayAsync(input, http.Actor(), ct))).RequireAuthorization(Permissions.PostFinance).Produces<PaymentRow>().ProducesProblem(409);
-        group.MapGet("/aging", async (DateTime? asOf, FinanceDirection? direction, FinanceReport report, CancellationToken ct) =>
-            Results.Ok(await report.AgingAsync(asOf, direction, ct))).Produces<AgingRow[]>();
-        group.MapGet("/reconciliation", async (DateTime? asOf, FinanceReport report, CancellationToken ct) =>
-            Results.Ok(await report.ReconciliationAsync(asOf, ct))).Produces<ReconciliationRow[]>();
+        group.MapGet("/aging", async (DateTime? asOf,DateOnly? asOfDate, FinanceDirection? direction, FinanceReport report, CancellationToken ct) =>
+            Results.Ok(await report.AgingAsync(asOf, direction, ct,asOfDate))).Produces<AgingRow[]>();
+        group.MapGet("/reconciliation", async (DateTime? asOf,DateOnly? asOfDate, FinanceReport report, CancellationToken ct) =>
+            Results.Ok(await report.ReconciliationAsync(asOf, ct,asOfDate))).Produces<ReconciliationRow[]>();
+        group.MapGet("/reconciliation/exceptions",async(DateTime? asOf,DateOnly? asOfDate,int? orderId,FinanceDirection? direction,int? page,int? pageSize,HttpContext http,IAuthorizationService authorization,FinanceReport report,CancellationToken ct)=>
+        {
+            var(number,size)=ApiPaging.Validate(page,pageSize);
+            var sensitive=(await authorization.AuthorizeAsync(http.User,http,Permissions.ViewSensitiveReports)).Succeeded;
+            return Results.Ok(await report.ExceptionsAsync(asOf,asOfDate,number,size,ct,orderId,direction,sensitive));
+        }).Produces<ReconciliationExceptionPage>();
     }
 }

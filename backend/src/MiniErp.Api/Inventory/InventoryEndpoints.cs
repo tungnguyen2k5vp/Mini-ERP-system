@@ -12,7 +12,7 @@ internal static class InventoryEndpoints
 {
     public static void MapInventory(this RouteGroupBuilder api)
     {
-        var inventory = api.MapGroup("/inventory").WithTags("Inventory").RequireAuthorization(Permissions.ViewInventory);
+        var inventory = api.MapGroup("/inventory").WithTags("Inventory").RequireAuthorization(Permissions.ViewInventory).AddEndpointFilter<FinancialFields>();
         inventory.MapGet("/balances", async (Guid? warehouseId, Guid? productId, string? search, bool? lowOnly, int? page, int? pageSize,
             InventoryReport report, CancellationToken ct) =>
         {
@@ -45,11 +45,22 @@ internal static class InventoryEndpoints
             var result = await stock.CreateAsync(input, http.Actor(), ct);
             return Results.Created($"/api/v1/inventory/documents/{result.Document.Id}", result);
         }).RequireAuthorization(Permissions.PostInventory).Produces<StockDocumentResponse>(201).WithName("CreateStockDocument");
-        docs.MapPost("/{id:int}/post", async (int id, HttpContext http, StockService stock, CancellationToken ct) =>
-            Results.Ok(await stock.PostAsync(id, http.Actor(), ct))).RequireAuthorization(Permissions.PostInventory)
+        docs.MapPut("/{id:int}", async (int id, StockDocumentEditInput input, HttpContext http,
+            IIdentityService identity, StockService stock, CancellationToken ct) =>
+        {
+            var profile = await identity.GetProfileAsync(http.User.AccountId()!.Value, ct);
+            var sensitive = profile?.Permissions.Contains(Permissions.ViewSensitiveReports) == true;
+            return Results.Ok(await stock.EditAsync(id, input, http.Actor(), sensitive, ct));
+        }).RequireAuthorization(Permissions.PostInventory).Produces<StockDocumentResponse>().ProducesProblem(409);
+        docs.MapPost("/{id:int}/post", async (int id, StockPostInput? input, HttpContext http, StockService stock, CancellationToken ct) =>
+        {
+            if (input is not null && input.Version is not { Length: 8 })
+                throw ErpException.Invalid("invalid_version", "Phiên bản không hợp lệ.");
+            return Results.Ok(await stock.PostAsync(id, http.Actor(), ct, version: input?.Version));
+        }).RequireAuthorization(Permissions.PostInventory)
             .Produces<StockDocumentResponse>().ProducesProblem(409).WithName("PostStockDocument");
-        docs.MapPost("/{id:int}/cancel", async (int id, HttpContext http, StockService stock, CancellationToken ct) =>
-            Results.Ok(await stock.CancelAsync(id, http.Actor(), ct))).RequireAuthorization(Permissions.PostInventory)
+        docs.MapPost("/{id:int}/cancel", async (int id, StockCancelInput input, HttpContext http, StockService stock, CancellationToken ct) =>
+            Results.Ok(await stock.CancelAsync(id, input, http.Actor(), ct))).RequireAuthorization(Permissions.PostInventory)
             .Produces<StockDocumentResponse>().ProducesProblem(409).WithName("CancelStockDocument");
         docs.MapPost("/{id:int}/reverse", async (int id, HttpContext http, StockService stock, CancellationToken ct) =>
             Results.Ok(await stock.ReverseAsync(id, http.Actor(), ct))).RequireAuthorization(Permissions.PostInventory)

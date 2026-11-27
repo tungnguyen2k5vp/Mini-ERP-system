@@ -79,9 +79,9 @@ jobs:
           npm --prefix frontend run typecheck
           npm --prefix frontend test
           npm --prefix frontend run build
-      - name: Install locked Playwright browser
+      - name: Install locked Playwright browsers
         working-directory: frontend
-        run: npx --no-install playwright install --with-deps chromium
+        run: npx --no-install playwright install --with-deps chromium firefox webkit
       - name: Browser flows on a separate seeded test database
         shell: bash
         run: |
@@ -102,7 +102,7 @@ jobs:
           test "$ready" = 1
           touch artifacts/browser-start
           cd frontend
-          npm run test:e2e -- --reporter=line,html
+          npx --no-install playwright test --reporter=line,html
       - name: Verify Compose, SQL runtime permissions and same-origin login
         env:
           ERP_WEB_PORT: '5198'

@@ -24,9 +24,13 @@ sequenceDiagram
     participant U as Warehouse employee
     participant A as StockService
     participant D as SQL Server
-    U->>A: Post draft
+    U->>A: Post draft with original rowversion
     A->>D: Begin transaction and load document and balances
-    A->>A: Validate state, availability and cost
+    alt Exact successful token and actor replay
+        A-->>U: Existing posted document, no new writes
+    else New posting intent
+        A->>A: Compare rowversion, state, availability and cost
+    end
     A->>D: Save balance, document, ledger, audit with rowversion
     alt All constraints and versions match
         D-->>A: Commit
@@ -51,6 +55,7 @@ sequenceDiagram
     C->>D: Check request, remaining units and reservation
     C->>I: Issue actual units in shared transaction
     I->>D: Update balance and record ledger cost
+    C->>D: Attribute posted sales cost by SKU if order history permits
     C->>F: Stage invoice for posted stock document
     F->>D: Record source, amount, due date and cost
     C->>D: Save fulfillment and audit, commit
@@ -59,3 +64,33 @@ sequenceDiagram
     F->>D: Check credits, prior cash and outstanding balances
     F->>D: Commit payment, allocations and audit
 ~~~
+
+## Draft edit and approval
+
+~~~mermaid
+sequenceDiagram
+    participant U as Maker
+    participant A as Order API
+    participant D as SQL Server
+    participant P as Approver
+    U->>A: PUT draft with version, lines and expectedDate
+    A->>D: Begin isolated write, lock order, compare version
+    A->>D: Freeze legacy create hash; replace lines and append edit audit
+    A->>D: Commit draft and clear tracked state
+    U->>A: Submit with version
+    A->>D: Lock, compare version, append submit audit and commit
+    P->>A: Approve with version
+    A->>D: Lock order and read maker audit IDs
+    A->>A: Require module grant, maker separation and inclusive threshold override
+    alt Policy and stock permit approval
+        A->>D: Reserve sales balances, update state, append audit, commit
+        A-->>P: Coherent detail and history
+    else Stale version, policy or stock failure
+        A->>D: Rollback and discard tracked changes
+        A-->>P: Problem Details
+    end
+~~~
+
+Reject and return-for-revision require an approver grant and a reason. Returned orders require a real edit before resubmission; rejection is terminal. Cancellation requires its grant and a reason, preserving existing fulfillment and invoices. Exact latest transition retries match action, original version, actor and reason. History provides event metadata rather than prior draft contents.
+
+Stock edits use the same version boundary with immutable kind. Count edits require explicit recount confirmation. Hidden retained-product costs are preserved; new restricted receipt products use server-owned purchase-price snapshots. Create retries serialize on request ID and compare the original normalized payload hash.

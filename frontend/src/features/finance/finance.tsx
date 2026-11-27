@@ -7,7 +7,8 @@ import { EmptyState, ErrorNotice, Loading } from '../../components/feedback'
 import { Button } from '../../components/ui/button'
 import { api, json, type Page, type Profile } from '../../lib/api'
 import { queryClient } from '../../lib/query'
-import { date, money } from '../../lib/format'
+import { businessDate, date, money } from '../../lib/format'
+import { ReconciliationExceptions } from './reconciliation-exceptions'
 
 type Invoice = {
   id: number
@@ -59,13 +60,17 @@ type Reconciliation = {
 
 export function FinancePage({ profile }: { profile: Profile }) {
   const [params, setParams] = useSearchParams()
-  const [tab, setTab] = useState('invoices')
+  const [tab, setTab] = useState(() =>
+    ['invoices', 'payments', 'aging', 'reconciliation'].includes(params.get('tab') ?? '')
+      ? params.get('tab')!
+      : 'invoices',
+  )
   const [direction, setDirection] = useState(params.get('direction') === '2' ? 2 : 1)
   const [partnerId, setPartner] = useState(params.get('partnerId') ?? '')
   const [invoiceId, setInvoiceId] = useState(params.get('invoiceId') ?? '')
   const [page, setPage] = useState(1)
   const [allocationPage, setAllocationPage] = useState(1)
-  const [asOf, setAsOf] = useState(() => new Date().toLocaleDateString('en-CA'))
+  const [asOf, setAsOf] = useState(() => params.get('asOfDate') || businessDate())
   const [pay, setPay] = useState(false)
   const [refund, setRefund] = useState(false)
   const [allocations, setAllocations] = useState<Record<string, string>>({})
@@ -113,12 +118,13 @@ export function FinancePage({ profile }: { profile: Profile }) {
   const aging = useQuery({
     queryKey: ['finance', 'aging', direction, asOf],
     queryFn: ({ signal }) =>
-      api<Aging[]>(`/finance/aging?direction=${direction}&asOf=${asOf}T23:59:59Z`, { signal }),
+      api<Aging[]>(`/finance/aging?direction=${direction}&asOfDate=${asOf}`, { signal }),
     enabled: tab === 'aging',
   })
   const reconciliation = useQuery({
-    queryKey: ['finance', 'reconciliation'],
-    queryFn: ({ signal }) => api<Reconciliation[]>('/finance/reconciliation', { signal }),
+    queryKey: ['finance', 'reconciliation', asOf],
+    queryFn: ({ signal }) =>
+      api<Reconciliation[]>('/finance/reconciliation?asOfDate=' + asOf, { signal }),
     enabled: tab === 'reconciliation',
   })
   const save = useMutation({
@@ -265,7 +271,7 @@ export function FinancePage({ profile }: { profile: Profile }) {
             </select>
           </label>
         )}
-        {tab === 'aging' && (
+        {(tab === 'aging' || tab === 'reconciliation') && (
           <div className="field inline-field">
             <label htmlFor="aging-date">Tính đến</label>
             <input
@@ -668,8 +674,8 @@ export function FinancePage({ profile }: { profile: Profile }) {
             {tab === 'reconciliation' && reconciliation.data && (
               <>
                 <p className="page-description reconciliation-note">
-                  Số dư hóa đơn được đối chiếu với các khoản thu chi đã phân bổ. Chênh lệch bằng 0
-                  khi sổ khớp.
+                  Tổng hợp tại ngày chốt theo giờ Việt Nam. Chênh lệch tổng có thể bù trừ; cần xem
+                  từng ngoại lệ bên dưới để kết luận.
                 </p>
                 <DataTable
                   label="Đối soát tài chính"
@@ -719,6 +725,14 @@ export function FinancePage({ profile }: { profile: Profile }) {
               </>
             )}
           </>
+        )}
+        {tab === 'reconciliation' && (
+          <ReconciliationExceptions
+            key={asOf + ':' + direction}
+            asOfDate={asOf}
+            direction={direction}
+            profile={profile}
+          />
         )}
       </div>
     </>

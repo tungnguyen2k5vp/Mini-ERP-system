@@ -531,11 +531,21 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("CreatePayloadHash")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
                     b.Property<Guid?>("DestinationId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsEdited")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
 
                     b.Property<byte>("Kind")
                         .HasColumnType("tinyint");
@@ -608,6 +618,10 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
                         .HasMaxLength(8)
                         .HasColumnType("varbinary(8)");
 
+                    b.Property<decimal?>("PostedSalesCost")
+                        .HasPrecision(19, 2)
+                        .HasColumnType("decimal(19,2)");
+
                     b.Property<string>("ProductName")
                         .IsRequired()
                         .HasMaxLength(160)
@@ -634,6 +648,8 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
                     b.ToTable("DocumentLines", "inventory", t =>
                         {
                             t.HasCheckConstraint("CK_StockLines_Cost", "[UnitCost] IS NULL OR [UnitCost] >= 0");
+
+                            t.HasCheckConstraint("CK_StockLines_PostedSalesCost", "[PostedSalesCost] IS NULL OR [PostedSalesCost] >= 0");
                         });
                 });
 
@@ -803,8 +819,16 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("CreatePayloadHash")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
+
+                    b.Property<DateOnly?>("ExpectedDate")
+                        .HasColumnType("date");
 
                     b.Property<byte>("Kind")
                         .HasColumnType("tinyint");
@@ -850,7 +874,7 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
 
                     b.ToTable("Orders", "orders", t =>
                         {
-                            t.HasCheckConstraint("CK_Orders_State", "[Kind] IN (1,2) AND [Status] BETWEEN 1 AND 6 AND [WarehouseKind] = 3");
+                            t.HasCheckConstraint("CK_Orders_State", "[Kind] IN (1,2) AND [Status] BETWEEN 1 AND 8 AND [WarehouseKind] = 3");
                         });
                 });
 
@@ -1011,6 +1035,15 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
+                    b.Property<string>("InputVersion")
+                        .HasMaxLength(12)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(12)");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
                     b.Property<string>("Result")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -1026,6 +1059,8 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TimestampUtc", "Id")
                         .IsDescending();
+
+                    b.HasIndex("Entity", "EntityId", "Id");
 
                     b.ToTable("AuditLogs", "audit");
                 });

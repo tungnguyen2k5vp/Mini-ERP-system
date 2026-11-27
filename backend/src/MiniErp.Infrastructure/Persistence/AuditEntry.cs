@@ -14,12 +14,16 @@ public sealed class AuditEntry
     public string Result { get; set; } = "";
     public string? Before { get; set; }
     public string? After { get; set; }
+    public string? Reason { get; set; }
+    public string? InputVersion { get; set; }
 
     public static AuditEntry Create(RequestActor actor, DateTime utc, string action, string entity,
-        string? entityId, string result = "Succeeded", string? before = null, string? after = null) =>
+        string? entityId, string result = "Succeeded", string? before = null, string? after = null,
+        string? reason = null, string? inputVersion = null) =>
         new()
         {
             UserId = actor.UserId, TimestampUtc = utc, Action = action, Entity = entity, EntityId = entityId,
-            CorrelationId = actor.CorrelationId, Result = result, Before = before, After = after
+            CorrelationId = actor.CorrelationId, Result = result, Before = before, After = after,
+            Reason = reason, InputVersion = inputVersion
         };
 }

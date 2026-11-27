@@ -1,3 +1,4 @@
+import { ConflictNotice } from '../../components/document-workflow'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
@@ -12,7 +13,7 @@ import { queryClient } from '../../lib/query'
 import { useLookupOptions } from '../catalog/listing'
 import type { StockDetail } from './inventory'
 
-const schema = (kind: number) => z.object({
+const schema = (kind: number, editing = false) => z.object({
   warehouseId: z.uuid('Chọn kho.'),
   destinationId: z.string(),
   note: z.string().max(300),
@@ -33,7 +34,7 @@ const schema = (kind: number) => z.object({
         (kind <= 3 && line.quantity <= 0)) {
       ctx.addIssue({ code: 'custom', path: ['lines', index, 'quantity'], message: 'Số lượng chưa phù hợp với loại phiếu.' })
     }
-    if (kind === 1 && line.unitCost === undefined) {
+    if (kind === 1 && !editing && line.unitCost === undefined) {
       ctx.addIssue({ code: 'custom', path: ['lines', index, 'unitCost'], message: 'Nhập giá vốn hàng nhập.' })
     }
     if (value.lines.findIndex(previous => previous.productId === line.productId) !== index) {
@@ -42,13 +43,14 @@ const schema = (kind: number) => z.object({
   })
 })
 
-type StockProduct = { id: string; sku: string; name: string; purchasePrice: number }
+type StockProduct = { id: string; sku: string; name: string; purchasePrice: number | null }
 type StockInput = z.infer<ReturnType<typeof schema>>
 const blankLine = { productId: '', quantity: 1, unitCost: undefined }
 
-export function StockForm() {
+export function StockForm({ initial, onSaved, onReload, canEditCost = true }: { initial?: StockDetail; onSaved?: () => void; onReload?: () => void; canEditCost?: boolean }) {
   const [requestId] = useState(() => crypto.randomUUID())
-  const [kind, setKind] = useState(1)
+  const [kind, setKind] = useState(initial?.document.kind ?? 1)
+  const [recount, setRecount] = useState(false)
   const navigate = useNavigate()
   const warehouses = useLookupOptions('warehouses')
   const products = useQuery({
@@ -56,19 +58,20 @@ export function StockForm() {
     queryFn: ({ signal }) => api<StockProduct[]>('/inventory/product-options', { signal }),
   })
   const form = useForm<StockInput>({
-    resolver: zodResolver(schema(kind)),
-    defaultValues: { warehouseId: '', destinationId: '', note: '', lines: [blankLine] },
+    resolver: zodResolver(schema(kind, Boolean(initial))),
+    defaultValues: initial ? { warehouseId: initial.document.warehouseId, destinationId: initial.destinationId ?? '', note: initial.note ?? '', lines: initial.lines.map(line => ({ productId: line.productId, quantity: line.quantity, unitCost: line.unitCost ?? undefined })) } : { warehouseId: '', destinationId: '', note: '', lines: [blankLine] },
   })
   const warehouseId = useWatch({ control: form.control, name: 'warehouseId' })
   const lines = useFieldArray({ control: form.control, name: 'lines' })
   const { errors, isDirty } = form.formState
   const dirty = isDirty || kind !== 1
   const save = useMutation({
-    mutationFn: (value: StockInput) => api<StockDetail>('/inventory/documents', json('POST', {
-      ...value, requestId, kind, destinationId: kind === 3 ? value.destinationId : null,
-      lines: value.lines.map(line => ({ ...line, unitCost: kind === 2 || kind === 3 ? null : line.unitCost ?? null })),
+    mutationFn: (value: StockInput) => api<StockDetail>(initial ? '/inventory/documents/' + initial.document.id : '/inventory/documents', json(initial ? 'PUT' : 'POST', {
+      ...value, ...(initial ? { version: initial.document.version, recount } : { requestId, kind }), destinationId: kind === 3 ? value.destinationId : null,
+      lines: value.lines.map(line => ({ ...line, unitCost: !canEditCost || kind === 2 || kind === 3 ? null : line.unitCost ?? null })),
     })),
     onSuccess: result => {
+      onSaved?.()
       form.reset()
       void queryClient.invalidateQueries({ queryKey: ['inventory', 'documents'] })
       queryClient.setQueryData(['inventory', 'document', String(result.document.id)], result)
@@ -79,17 +82,17 @@ export function StockForm() {
     if (dirty && !save.isSuccess) { event.preventDefault(); event.returnValue = true }
   })
 
-  const costEditable = kind === 1 || kind === 4 || kind === 5
+  const costEditable = canEditCost && (kind === 1 || kind === 4 || kind === 5)
   return <>
-    <header className="page-heading"><div><h1>Lập phiếu kho</h1>
+    <header className="page-heading"><div><h1>{initial ? 'Sửa phiếu nháp' : 'Lập phiếu kho'}</h1>
       <p className="page-description">Phiếu nháp chỉ tác động đến tồn kho sau khi ghi sổ.</p></div></header>
     <ErrorNotice error={warehouses.error ?? products.error} />
     {warehouses.isPending || products.isPending ? <Loading /> : <form className="panel form-stack"
       noValidate onSubmit={form.handleSubmit(value => save.mutate(value))}>
-      <div className="form-grid">
+      <fieldset disabled={save.isPending} className="form-stack"><div className="form-grid">
         <div className="field">
           <label htmlFor="stock-kind">Loại phiếu</label>
-          <select id="stock-kind" value={kind} onChange={event => setKind(Number(event.target.value))}>
+          <select id="stock-kind" disabled={Boolean(initial) || save.isPending} value={kind} onChange={event => setKind(Number(event.target.value))}>
             <option value="1">Nhập kho</option><option value="2">Xuất kho</option><option value="3">Chuyển kho</option>
             <option value="4">Điều chỉnh</option><option value="5">Kiểm kê</option>
           </select>
@@ -125,7 +128,7 @@ export function StockForm() {
               <select id={'product-' + line.id} aria-invalid={Boolean(error?.productId)}
                 {...form.register(`lines.${index}.productId`, { onChange: event => {
                   const selected = products.data?.find(row => row.id === event.target.value)
-                  if (selected && kind === 1) form.setValue(`lines.${index}.unitCost`, selected.purchasePrice)
+                  if (selected && kind === 1 && canEditCost) form.setValue(`lines.${index}.unitCost`, selected.purchasePrice ?? undefined)
                 } })}>
                 <option value="">Chọn sản phẩm</option>
                 {products.data?.map(row => <option key={row.id} value={row.id}>{row.sku} · {row.name}</option>)}
@@ -152,13 +155,15 @@ export function StockForm() {
       <div><Button type="button" variant="outline" onClick={() => lines.append(blankLine)} disabled={lines.fields.length >= 50}>
         <Plus size={16} aria-hidden /> Thêm dòng
       </Button></div>
+      {initial && kind === 5 && <label className="checkbox-row"><input type="checkbox" checked={recount} onChange={e => setRecount(e.target.checked)} /> Tôi đã đếm lại; chụp lại tồn kho hiện tại cho phiếu kiểm kê.</label>}
       <ErrorNotice error={save.error} />
+      {save.error && initial && <ConflictNotice onReload={() => onReload?.()} />}
       <div className="form-actions">
         <Button type="button" variant="outline" disabled={save.isPending} onClick={() => {
           if (!dirty || window.confirm('Bỏ thay đổi chưa lưu?')) void navigate('/ton-kho/chung-tu')
         }}>Hủy</Button>
         <Button type="submit" disabled={save.isPending}>{save.isPending ? 'Đang lưu…' : 'Lưu phiếu nháp'}</Button>
       </div>
-    </form>}
+    </fieldset></form>}
   </>
 }

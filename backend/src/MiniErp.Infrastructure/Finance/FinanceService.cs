@@ -1,4 +1,5 @@
 using System.Data;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using MiniErp.Application;
 using MiniErp.Application.Finance;
@@ -19,8 +20,16 @@ public sealed class FinanceService(ErpDbContext db, TimeProvider clock) : IFinan
             throw ErpException.Invalid("invalid_finance_source", "Nguồn hóa đơn không hợp lệ.");
         Money.Validate(source.Amount, true);
         Money.Validate(source.CostAmount, true);
-        if (db.Set<FinanceInvoice>().Local.Any(x => x.StockDocumentId == source.StockDocumentId) ||
-            await db.Set<FinanceInvoice>().AnyAsync(x => x.StockDocumentId == source.StockDocumentId, ct)) return;
+        var prior=db.Set<FinanceInvoice>().Local.SingleOrDefault(x=>x.StockDocumentId==source.StockDocumentId)
+            ?? await db.Set<FinanceInvoice>().AsNoTracking().SingleOrDefaultAsync(x=>x.StockDocumentId==source.StockDocumentId,ct);
+        if(prior is not null)
+        {
+            if(prior.OrderId!=source.OrderId || prior.OrderNumber!=source.OrderNumber || prior.PartnerId!=source.PartnerId ||
+                prior.Direction!=source.Direction || prior.IsCredit!=source.IsCredit || prior.Amount!=source.Amount ||
+                prior.CostAmount!=source.CostAmount || prior.IssuedAtUtc!=source.OccurredAtUtc)
+                throw ErpException.Conflict("invoice_source_reused","Chứng từ nguồn đã tạo hóa đơn với nội dung khác.");
+            return;
+        }
         if (!await db.StockDocuments.AnyAsync(x => x.Id == source.StockDocumentId && x.Status == StockStatus.Posted, ct))
             throw ErpException.Invalid("unposted_invoice_source", "Hóa đơn cần chứng từ kho đã ghi sổ.");
         var partner = await db.Partners.SingleOrDefaultAsync(x => x.Id == source.PartnerId, ct)
@@ -33,9 +42,13 @@ public sealed class FinanceService(ErpDbContext db, TimeProvider clock) : IFinan
             IssuedAtUtc = source.OccurredAtUtc, DueAtUtc = source.OccurredAtUtc.AddDays(partner.PaymentTermsDays) });
     }
 
-    public async Task<Page<InvoiceRow>> InvoicesAsync(FinanceDirection? direction, Guid? partnerId, int page, int size, CancellationToken ct,long? invoiceId=null)
+    public Task<Page<InvoiceRow>> InvoicesAsync(FinanceDirection? direction,Guid? partnerId,int page,int size,CancellationToken ct,long? invoiceId=null)=>
+        ReadWithRetryAsync(()=>ReadInvoicesAsync(direction,partnerId,page,size,ct,invoiceId),ct);
+
+    private async Task<Page<InvoiceRow>> ReadInvoicesAsync(FinanceDirection? direction, Guid? partnerId, int page, int size, CancellationToken ct,long? invoiceId)
     {
         ValidateDirection(direction);
+        await using var transaction=await db.Database.BeginTransactionAsync(IsolationLevel.Serializable,ct);
         var query = db.Set<FinanceInvoice>().AsNoTracking().Where(x => (!direction.HasValue || x.Direction == direction) && (!partnerId.HasValue || x.PartnerId == partnerId) && (!invoiceId.HasValue || x.Id==invoiceId));
         var total = await query.CountAsync(ct);
         var rows = await (from i in query.OrderByDescending(x => x.Id).Skip((page - 1) * size).Take(size)
@@ -46,8 +59,10 @@ public sealed class FinanceService(ErpDbContext db, TimeProvider clock) : IFinan
         var sources=await db.Set<FinanceInvoice>().AsNoTracking().Where(x=>orderIds.Contains(x.OrderId))
             .Select(x=>new {x.OrderId,x.Direction,Invoice=new SettlementInvoice(x.Id,x.IsCredit,x.Amount,x.Allocations.Sum(a=>a.Amount))}).ToArrayAsync(ct);
         var settlements=sources.GroupBy(x=>new{x.OrderId,x.Direction}).SelectMany(g=>Settlement.Calculate(g.Select(x=>x.Invoice))).ToDictionary(x=>x.Key,x=>x.Value);
-        return new(rows.Select(row=>row with { Settled=settlements[row.Id].CashSettled,Outstanding=settlements[row.Id].Outstanding,OffsetAmount=settlements[row.Id].OffsetAmount,
+        var result=new Page<InvoiceRow>(rows.Select(row=>row with { Settled=settlements[row.Id].CashSettled,Outstanding=settlements[row.Id].Outstanding,OffsetAmount=settlements[row.Id].OffsetAmount,
             ActionableAmount=settlements[row.Id].ActionableAmount }).ToArray(), page, size, total);
+        await transaction.CommitAsync(ct);
+        return result;
     }
 
     public async Task<FinanceOptions> OptionsAsync(FinanceDirection direction,CancellationToken ct)
@@ -61,13 +76,19 @@ public sealed class FinanceService(ErpDbContext db, TimeProvider clock) : IFinan
         return new(partners,methods);
     }
 
-    public async Task<Page<PaymentRow>> PaymentsAsync(FinanceDirection? direction,Guid? partnerId,int page, int size, CancellationToken ct)
+    public Task<Page<PaymentRow>> PaymentsAsync(FinanceDirection? direction,Guid? partnerId,int page,int size,CancellationToken ct)=>
+        ReadWithRetryAsync(()=>ReadPaymentsAsync(direction,partnerId,page,size,ct),ct);
+
+    private async Task<Page<PaymentRow>> ReadPaymentsAsync(FinanceDirection? direction,Guid? partnerId,int page, int size, CancellationToken ct)
     {
         ValidateDirection(direction);
+        await using var transaction=await db.Database.BeginTransactionAsync(IsolationLevel.Serializable,ct);
         var query = db.Set<FinancePayment>().AsNoTracking().Where(x=>(!direction.HasValue || x.Direction==direction) && (!partnerId.HasValue || x.PartnerId==partnerId));
         var count = await query.CountAsync(ct);
         var rows = await query.Include(x => x.Allocations).OrderByDescending(x => x.Id).Skip((page - 1) * size).Take(size).ToArrayAsync(ct);
-        return new(rows.Select(Payment).ToArray(), page, size, count);
+        var result=new Page<PaymentRow>(rows.Select(Payment).ToArray(), page, size, count);
+        await transaction.CommitAsync(ct);
+        return result;
     }
 
     public async Task<PaymentRow> PayAsync(PaymentInput input, RequestActor actor, CancellationToken ct)
@@ -123,6 +144,23 @@ public sealed class FinanceService(ErpDbContext db, TimeProvider clock) : IFinan
 
     private static PaymentRow Payment(FinancePayment x) => new(x.Id, x.RequestId, x.PartnerId, x.Direction, x.IsRefund,
         x.PaymentMethodId, x.Amount, x.Reference, x.PostedAtUtc, x.Allocations.Select(a => new AllocationInput(a.InvoiceId, a.Amount)).ToArray());
+    private static async Task<T> ReadWithRetryAsync<T>(Func<Task<T>> read,CancellationToken ct)
+    {
+        for(var attempt=0;;attempt++)
+        {
+            try{return await read();}
+            catch(Exception error)when(attempt<2 && IsDeadlock(error))
+            {
+                // Only a whole pure read is replayed, after its failed transaction has been disposed.
+                await Task.Delay(TimeSpan.FromMilliseconds(25*(attempt+1)),ct);
+            }
+        }
+    }
+    private static bool IsDeadlock(Exception? error)
+    {
+        while(error is not null){if(error is SqlException{Number:1205})return true;error=error.InnerException;}
+        return false;
+    }
     public static void ValidateDirection(FinanceDirection? direction)
     {
         if (direction.HasValue && !Enum.IsDefined(direction.Value)) throw ErpException.Invalid("finance_direction", "Loại công nợ không hợp lệ.");
