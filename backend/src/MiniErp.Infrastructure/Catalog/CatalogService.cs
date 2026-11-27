@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using MiniErp.Application;
 using MiniErp.Application.Catalog;
@@ -128,12 +129,21 @@ public sealed class CatalogService(ErpDbContext db, TimeProvider clock)
         await db.Partners.Where(x => x.Kind == kind && x.Id == id).Select(PartnerProjection).SingleOrDefaultAsync(ct)
         ?? throw ErpException.Missing("partner_missing", "Đối tác không tồn tại.");
 
-    public async Task<PartnerResponse> SavePartnerAsync(PartnerKind kind, Guid? id, PartnerInput input, RequestActor actor, CancellationToken ct)
+    public async Task<PartnerResponse> SavePartnerAsync(PartnerKind kind, Guid? id, PartnerInput input, RequestActor actor, CancellationToken ct,
+        bool canChangeCreditLimit = false)
     {
+        await using var transaction = await db.BeginDocumentWriteAsync(ct);
+        if (id is not null) await db.LockFinancePartnerAsync(id.Value, ct);
         var row = id is null ? new BusinessPartner { Kind = kind } : await db.Partners
             .SingleOrDefaultAsync(x => x.Kind == kind && x.Id == id, ct)
             ?? throw ErpException.Missing("partner_missing", "Đối tác không tồn tại.");
         if (id is not null) RequireVersion(input.Version, row.Version);
+        var oldLimit = row.CreditLimit;
+        var limit = CatalogRules.NonNegative(input.CreditLimit);
+        if (kind == PartnerKind.Supplier && limit != 0)
+            throw ErpException.Invalid("supplier_credit_limit", "Hạn mức chỉ áp dụng cho khách hàng.");
+        if (kind == PartnerKind.Customer && id is not null && limit != oldLimit && !canChangeCreditLimit)
+            throw ErpException.Forbidden("credit_limit_change_required", "Bạn cần quyền điều chỉnh hạn mức tín dụng.");
 
         var before = id.HasValue ? Snapshot(row.Code, row.Name, row.IsActive) : null;
         row.Code = CatalogRules.NormalizeCode(input.Code);
@@ -142,19 +152,22 @@ public sealed class CatalogService(ErpDbContext db, TimeProvider clock)
         row.Email = CatalogRules.OptionalText(input.Email);
         row.Address = CatalogRules.OptionalText(input.Address);
         row.TaxCode = CatalogRules.OptionalText(input.TaxCode);
-        if (kind == PartnerKind.Supplier && input.CreditLimit != 0)
-        {
-            throw ErpException.Invalid("supplier_credit_limit", "Hạn mức chỉ áp dụng cho khách hàng.");
-        }
-        row.CreditLimit = CatalogRules.NonNegative(input.CreditLimit);
+        row.CreditLimit = limit;
         row.PaymentTermsDays = input.PaymentTermsDays;
         row.IsActive = input.IsActive;
         if (id is null) db.Partners.Add(row);
 
         Audit(actor, id is null ? "CreatePartner" : "UpdatePartner", kind.ToString(), row.Id, before,
             Snapshot(row.Code, row.Name, row.IsActive));
+        if (kind == PartnerKind.Customer && (id is null || oldLimit != limit))
+            db.AuditEntries.Add(AuditEntry.Create(actor, clock.GetUtcNow().UtcDateTime,
+                id is null ? "SetInitialCreditLimit" : "ChangeCreditLimit", "Customer", row.Id.ToString(),
+                before: id is null ? null : oldLimit.ToString("G29", CultureInfo.InvariantCulture),
+                after: limit.ToString("G29", CultureInfo.InvariantCulture)));
         await db.SaveChangesAsync(ct);
-        return await GetPartnerAsync(kind, row.Id, ct);
+        var result = await GetPartnerAsync(kind, row.Id, ct);
+        await transaction.CommitAsync(ct);
+        return result;
     }
 
     private void Audit(RequestActor actor, string action, string entity, Guid id, string? before, string after) =>

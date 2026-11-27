@@ -1,5 +1,16 @@
 # Demo guide
 
+## Milestone 3 · Ví dụ tín dụng và sửa thu chi
+
+Mở **Công nợ & thanh toán → Lịch sử đối tác**, chọn **Công ty Phân phối Minh An**. Đơn bán 600.000 đồng đã được duyệt vượt hạn mức 500.000 đồng với lý do lưu trên đơn. **Kho mô phỏng tín dụng** (`DEMO-TD`) giao 8 trong 10 sản phẩm. Sao kê ghi hóa đơn 480.000 đồng, phiếu thu nhầm 180.000 đồng, lần đảo và khoản thu đúng 120.000 đồng. Dư hóa đơn là 360.000 đồng, cam kết chưa giao là 120.000 đồng, còn 20.000 đồng hạn mức. Mở liên kết đơn nguồn để đối chiếu lịch sử duyệt và giao hàng. [Mở sao kê trên bản thử](http://localhost:5186/tai-chinh?tab=statement&direction=1&partnerId=fb883000-a43b-4b17-9dfa-000000000001)
+
+1. Tạo khách hàng hạn mức 1.000.000 đồng và đơn bán 600.000 đồng. Duyệt đơn, xem cam kết chưa giao 600.000; giao 200.000 rồi xem công nợ 200.000 cộng cam kết 400.000, tổng sử dụng vẫn 600.000. Đơn mới 400.000 đưa dự kiến đúng hạn mức; đơn 500.000 cần quyền vượt hạn mức và lý do. Khách hàng hạn mức 0 không bị chặn bởi hạn mức.
+2. Mở sao kê chốt ngày trước khi giao và ngày sau khi giao. So sánh với khối tín dụng hiện tại: sao kê không cộng cam kết chưa giao. Kiểm tra cùng một phiếu thu phân bổ hai hóa đơn xuất hiện thành hai dòng theo đúng số phân bổ, không lặp toàn bộ số tiền phiếu.
+3. Với đơn có hóa đơn 100.000 đồng, thu đủ 100.000 rồi ghi giảm 40.000 và hoàn 40.000. Thử đảo phiếu thu: bị chặn vì tiền hoàn còn hiệu lực. Người có đủ ba quyền tài chính đảo phiếu hoàn với lý do, sau đó đảo phiếu thu. Phiếu và phân bổ gốc vẫn tra cứu được; muốn sửa phân bổ thì tạo phiếu mới.
+4. Chốt sao kê trước và sau lần đảo. Trước mốc đảo vẫn có tác động thu/hoàn gốc; sau mốc đảo có dòng ngược dấu. Kiểm tra dư cuối và quá hạn trên toàn bộ kỳ, không chỉ trang đang mở. Gửi lại đúng requestId/lý do bằng cùng người thực hiện trả lần đảo cũ.
+
+`Finance.Reverse` và `Sales.OverrideCreditLimit` mặc định chỉ dành cho quản trị viên nhưng có thể cấp riêng theo vai trò. Đây là hướng dẫn thao tác; kết quả chạy thực tế được ghi riêng trong báo cáo kiểm thử.
+
 ## V2 walkthrough · 12 minutes
 
 | Time | Live task | What to check |

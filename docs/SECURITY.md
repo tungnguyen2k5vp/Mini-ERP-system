@@ -1,5 +1,9 @@
 # Security
 
+Hạn mức khách hàng đã tồn tại không thể bị tăng, giảm hoặc xóa về 0 chỉ bằng `Catalog.Update`: cần thêm `Finance.ChangeCreditLimit`, mặc định chỉ quản trị viên có và cấp được riêng. Kiểm tra so với giá trị đang lưu cùng rowversion xảy ra trước mọi thay đổi liên hệ. Tạo mới vẫn dùng `Catalog.Create` để đặt chính sách ban đầu; nhật ký ghi riêng giá trị ban đầu và mọi thay đổi sau đó, kèm tác giả và hạn mức trước/sau.
+
+`Finance.Reverse` và `Sales.OverrideCreditLimit` là quyền độc lập, mặc định chỉ quản trị viên có và có thể cấp riêng theo vai trò. Đảo thanh toán vẫn cần `Finance.View` và `Finance.Post`; vượt hạn mức vẫn cần `Sales.Approve` và các điều kiện duyệt khác. Hai hành động phải ghi lý do, người thực hiện và nguồn liên kết; không sửa chứng từ tiền gốc. Tín dụng hiện tại khác sao kê theo ngày chốt. API không cho lùi thời điểm thu chi/đảo qua sự kiện công nợ liên quan hoặc đảo làm tiền hoàn mất bảo đảm.
+
 Server-side field permissions cover purchase price, COGS and margin across JSON responses, order sorting and Excel cells. Inspection of a sales source-cost discrepancy requires the same sensitive-cost grant as the numeric values. A restricted row is excluded before computing the exception count and page. [Endpoint and field matrix](API_PERMISSION_MATRIX.md)
 
 The commercial endpoints resolve the actual order kind in SQL before checking the module grant. Fulfillment and reversal also require Inventory.Post. Finance reads and postings have separate grants. Dashboard, search and work queues filter by current permissions. SQL integration cases exercise denial for anonymous, Viewer and management users.

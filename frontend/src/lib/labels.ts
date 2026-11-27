@@ -21,6 +21,9 @@ const actions: Record<string, string> = {
 
 export function permissionLabel(permission: string) {
   const special: Record<string, string> = {
+    'Sales.OverrideCreditLimit': 'Duyệt bán hàng vượt hạn mức công nợ',
+    'Finance.ChangeCreditLimit': 'Thay đổi hạn mức công nợ khách hàng',
+    'Finance.Reverse': 'Đảo phiếu thu chi đã ghi sổ',
     'System.Users': 'Quản lý người dùng',
     'System.Roles': 'Quản lý phân quyền',
     'System.Audit': 'Xem nhật ký hoạt động',

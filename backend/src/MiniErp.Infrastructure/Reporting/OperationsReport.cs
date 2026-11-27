@@ -87,7 +87,7 @@ public sealed class OperationsReport(ErpDbContext db, TimeProvider clock)
             {
                 var value = await sql.ExecuteScalarAsync<decimal>(new CommandDefinition("""
                     SELECT COALESCE((SELECT CAST(SUM(Amount*CASE WHEN IsCredit=1 THEN -1 ELSE 1 END) AS decimal(28,2)) FROM finance.Invoices WHERE Direction=@Direction AND IssuedAtUtc<@Until),0)
-                    -COALESCE((SELECT CAST(SUM(Amount*CASE WHEN IsRefund=1 THEN -1 ELSE 1 END) AS decimal(28,2)) FROM finance.Payments WHERE Direction=@Direction AND PostedAtUtc<@Until),0)
+                    -COALESCE((SELECT CAST(SUM(CASE WHEN IsRefund=1 THEN -Amount ELSE Amount END) AS decimal(28,2)) FROM finance.PaymentEvents WHERE Direction=@Direction AND PostedAtUtc<@Until),0)
                     """, Bounds(start, end, new { Direction = direction.Id }), read, cancellationToken: ct));
                 metrics.Add(new(direction.Key, direction.Label, value, "VND", $"/tai-chinh?direction={direction.Id}&tab=aging&asOfDate={end:yyyy-MM-dd}"));
             }

@@ -1,15 +1,64 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using MiniErp.Application;
 using MiniErp.Application.Auth;
 using MiniErp.Application.Catalog;
+using MiniErp.Infrastructure.Persistence;
 
 namespace MiniErp.IntegrationTests;
 
 [Collection("SqlServer")]
 public sealed class CatalogTests(ErpFixture fixture)
 {
+    [SqlServerFact]
+    public async Task Established_customer_limit_requires_separate_grant_but_contact_edits_and_initial_policy_remain_available()
+    {
+        using var admin = await fixture.AuthenticatedClientAsync();
+        var email = $"catalog-manager-{Guid.NewGuid():N}@minierp.example";
+        var password = Guid.NewGuid().ToString("N") + "Aa7!";
+        using var account = await admin.PostAsJsonAsync("/api/v1/users", new CreateUserRequest(email, "Limit policy manager", password, "Manager"));
+        await ReadAsync<UserAccount>(account);
+        using var manager = await fixture.AuthenticatedClientAsync(email, password);
+        var input = new PartnerInput("L-" + Guid.NewGuid().ToString("N")[..10], "Original customer", null, null, null, null, 1000, 30, true, null);
+        using var created = await manager.PostAsJsonAsync("/api/v1/customers", input);
+        var original = await ReadAsync<PartnerResponse>(created);
+        var path = $"/api/v1/customers/{original.Id}";
+        foreach (var attemptedLimit in new[] { 2000m, 0m, 500m })
+        {
+            using var denied = await manager.PutAsJsonAsync(path, input with { Name = "Must not leak", CreditLimit = attemptedLimit, Version = original.Version });
+            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        }
+        var unchanged = (await manager.GetFromJsonAsync<PartnerResponse>(path))!;
+        Assert.Equal(input.Name, unchanged.Name);
+        Assert.Equal(original.Version, unchanged.Version);
+        using var contact = await manager.PutAsJsonAsync(path, input with { Name = "Updated contact", Version = original.Version });
+        var updated = await ReadAsync<PartnerResponse>(contact);
+        Assert.Equal(1000, updated.CreditLimit);
+        using var changed = await admin.PutAsJsonAsync(path, input with { CreditLimit = 2000, Version = updated.Version });
+        var authorized = await ReadAsync<PartnerResponse>(changed);
+        Assert.Equal(2000, authorized.CreditLimit);
+        using var stale = await manager.PutAsJsonAsync(path, input with { CreditLimit = 1000, Version = updated.Version });
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        using var unlimited = await admin.PutAsJsonAsync(path, input with { CreditLimit = 0, Version = authorized.Version });
+        Assert.Equal(0, (await ReadAsync<PartnerResponse>(unlimited)).CreditLimit);
+        using var zeroCreated = await manager.PostAsJsonAsync("/api/v1/customers", input with { Code = input.Code + "Z", CreditLimit = 0 });
+        var zero = await ReadAsync<PartnerResponse>(zeroCreated);
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ErpDbContext>();
+        var events = await db.AuditEntries.AsNoTracking().Where(x => x.Entity == "Customer" && x.EntityId == original.Id.ToString() &&
+            (x.Action == "SetInitialCreditLimit" || x.Action == "ChangeCreditLimit")).OrderBy(x => x.Id).ToArrayAsync();
+        Assert.Equal(3, events.Length);
+        Assert.Null(events[0].Before); Assert.Equal("1000", events[0].After);
+        Assert.Equal("1000", events[1].Before); Assert.Equal("2000", events[1].After);
+        Assert.Equal("2000", events[2].Before); Assert.Equal("0", events[2].After);
+        Assert.NotNull(events[0].UserId); Assert.NotEqual(events[0].UserId, events[1].UserId);
+        Assert.Contains(await db.AuditEntries.Where(x => x.EntityId == zero.Id.ToString()).ToArrayAsync(),
+            x => x.Action == "SetInitialCreditLimit" && x.Before == null && x.After == "0");
+    }
+
     [SqlServerFact]
     public async Task Product_enforces_typed_references_unique_sku_and_version()
     {

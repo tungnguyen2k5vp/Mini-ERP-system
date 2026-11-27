@@ -10,7 +10,7 @@ using MiniErp.Infrastructure.Persistence;
 
 namespace MiniErp.Infrastructure.Finance;
 
-public sealed class FinanceReport(ErpDbContext db, TimeProvider clock)
+public sealed partial class FinanceReport(ErpDbContext db, TimeProvider clock)
 {
     public async Task<AgingRow[]> AgingAsync(DateTime? asOf, FinanceDirection? direction, CancellationToken ct,DateOnly? asOfDate=null)
     {
@@ -25,8 +25,8 @@ public sealed class FinanceReport(ErpDbContext db, TimeProvider clock)
         var command = new CommandDefinition("""
               SELECT i.Id,i.OrderId,i.PartnerId,p.Name PartnerName,i.Direction,i.IsCredit,i.Amount,COALESCE(a.Paid,0) Paid,i.DueAtUtc
               FROM finance.Invoices i JOIN catalog.BusinessPartners p ON p.Id=i.PartnerId
-              OUTER APPLY (SELECT SUM(a.Amount) Paid FROM finance.Allocations a
-                JOIN finance.Payments pay ON pay.Id=a.PaymentId WHERE a.InvoiceId=i.Id AND (pay.PostedAtUtc<@At OR (@Inclusive=1 AND pay.PostedAtUtc=@At))) a
+              OUTER APPLY (SELECT SUM(CASE WHEN pay.IsReversal=1 THEN -a.Amount ELSE a.Amount END) Paid FROM finance.Allocations a
+                JOIN finance.PaymentEvents pay ON pay.PaymentId=a.PaymentId WHERE a.InvoiceId=i.Id AND (pay.PostedAtUtc<@At OR (@Inclusive=1 AND pay.PostedAtUtc=@At))) a
               WHERE (i.IssuedAtUtc<@At OR (@Inclusive=1 AND i.IssuedAtUtc=@At)) AND (@Direction IS NULL OR i.Direction=@Direction)
             """, parameters,transaction:transaction,cancellationToken: ct);
         var sources=(await connection.QueryAsync<HistoricalInvoice>(command)).ToArray();
@@ -57,10 +57,10 @@ public sealed class FinanceReport(ErpDbContext db, TimeProvider clock)
               FROM finance.Invoices WHERE IssuedAtUtc<@At OR (@Inclusive=1 AND IssuedAtUtc=@At) GROUP BY Direction),
             P AS (SELECT Direction,CAST(SUM(CASE WHEN IsRefund=0 THEN Amount ELSE 0 END) AS decimal(28,2)) Paid,
               CAST(SUM(CASE WHEN IsRefund=1 THEN Amount ELSE 0 END) AS decimal(28,2)) Refunded
-              FROM finance.Payments WHERE PostedAtUtc<@At OR (@Inclusive=1 AND PostedAtUtc=@At) GROUP BY Direction),
+              FROM finance.PaymentEvents WHERE PostedAtUtc<@At OR (@Inclusive=1 AND PostedAtUtc=@At) GROUP BY Direction),
             A AS (SELECT i.Direction,CAST(SUM(CASE WHEN i.IsCredit=1 THEN COALESCE(a.Paid,0)-i.Amount ELSE i.Amount-COALESCE(a.Paid,0) END) AS decimal(28,2)) Outstanding
-              FROM finance.Invoices i OUTER APPLY (SELECT CAST(SUM(a.Amount) AS decimal(28,2)) Paid FROM finance.Allocations a
-                JOIN finance.Payments p ON p.Id=a.PaymentId WHERE a.InvoiceId=i.Id AND (p.PostedAtUtc<@At OR (@Inclusive=1 AND p.PostedAtUtc=@At))) a
+              FROM finance.Invoices i OUTER APPLY (SELECT CAST(SUM(CASE WHEN p.IsReversal=1 THEN -a.Amount ELSE a.Amount END) AS decimal(28,2)) Paid FROM finance.Allocations a
+                JOIN finance.PaymentEvents p ON p.PaymentId=a.PaymentId WHERE a.InvoiceId=i.Id AND (p.PostedAtUtc<@At OR (@Inclusive=1 AND p.PostedAtUtc=@At))) a
               WHERE i.IssuedAtUtc<@At OR (@Inclusive=1 AND i.IssuedAtUtc=@At) GROUP BY i.Direction)
             SELECT d.Direction,COALESCE(i.Invoiced,0) Invoiced,COALESCE(i.Credits,0) Credits,
               COALESCE(p.Paid,0) Paid,COALESCE(p.Refunded,0) Refunded,
@@ -112,7 +112,10 @@ public sealed class FinanceReport(ErpDbContext db, TimeProvider clock)
         I AS (SELECT * FROM finance.Invoices WHERE IssuedAtUtc<@At OR (@Inclusive=1 AND IssuedAtUtc=@At)),
         P AS (SELECT * FROM finance.Payments WHERE PostedAtUtc<@At OR (@Inclusive=1 AND PostedAtUtc=@At)),
         A AS (SELECT a.* FROM finance.Allocations a JOIN P p ON p.Id=a.PaymentId),
-        CashP AS (SELECT p.* FROM P p WHERE p.Amount=(SELECT SUM(a.Amount) FROM finance.Allocations a WHERE a.PaymentId=p.Id)
+        R AS (SELECT * FROM finance.PaymentReversals WHERE PostedAtUtc<@At OR (@Inclusive=1 AND PostedAtUtc=@At)),
+        ActiveA AS (SELECT a.* FROM A a WHERE NOT EXISTS(SELECT 1 FROM R r WHERE r.PaymentId=a.PaymentId)),
+        CashP AS (SELECT p.* FROM P p WHERE NOT EXISTS(SELECT 1 FROM R r WHERE r.PaymentId=p.Id)
+          AND p.Amount=(SELECT SUM(a.Amount) FROM finance.Allocations a WHERE a.PaymentId=p.Id)
           AND NOT EXISTS(SELECT 1 FROM finance.Allocations a JOIN finance.Invoices i ON i.Id=a.InvoiceId WHERE a.PaymentId=p.Id
             AND (i.PartnerId<>p.PartnerId OR i.Direction<>p.Direction OR i.IsCredit<>p.IsRefund))),
         Checks AS (
@@ -158,7 +161,11 @@ public sealed class FinanceReport(ErpDbContext db, TimeProvider clock)
           UNION ALL
           SELECT 'invoice_overallocated','Invoice',CONVERT(nvarchar(64),i.Id),i.OrderId,i.StockDocumentId,i.Id,NULL,i.Amount,s.Amount,
             N'Tổng tiền phân bổ vượt giá trị hóa đơn.',NULL,NULL,i.Direction FROM I i
-          CROSS APPLY(SELECT SUM(a.Amount) Amount FROM A a WHERE a.InvoiceId=i.Id)s WHERE s.Amount>i.Amount
+          CROSS APPLY(SELECT SUM(a.Amount) Amount FROM ActiveA a WHERE a.InvoiceId=i.Id)s WHERE s.Amount>i.Amount
+          UNION ALL
+          SELECT 'reversal_before_payment','PaymentReversal',CONVERT(nvarchar(64),r.Id),NULL,NULL,NULL,p.Id,NULL,NULL,
+            N'Thời điểm đảo sớm hơn phiếu thanh toán gốc.',CONVERT(nvarchar(40),p.PostedAtUtc,126),CONVERT(nvarchar(40),r.PostedAtUtc,126),p.Direction
+          FROM R r JOIN finance.Payments p ON p.Id=r.PaymentId WHERE r.PostedAtUtc<p.PostedAtUtc
           UNION ALL
           SELECT v.Code,'Allocation',CONCAT(p.Id,N'/',i.Id),i.OrderId,i.StockDocumentId,i.Id,p.Id,v.Expected,v.Actual,v.Message,NULL,NULL,p.Direction
           FROM A a JOIN P p ON p.Id=a.PaymentId JOIN finance.Invoices i ON i.Id=a.InvoiceId

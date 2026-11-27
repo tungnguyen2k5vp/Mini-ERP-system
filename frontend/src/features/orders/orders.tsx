@@ -1,3 +1,4 @@
+import { CreditExposurePanel, useCreditExposure } from '../finance/credit-exposure'
 import { ConflictNotice, DocumentTimeline } from '../../components/document-workflow'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Plus, Printer, Search, Trash2 } from 'lucide-react'
@@ -481,6 +482,8 @@ function OrderDetailContent({ kind, profile }: { kind: number; profile: Profile 
     queryKey: ['orders', 'detail', id],
     queryFn: ({ signal }) => api<Detail>('/orders/' + id, { signal }),
   })
+  const canViewCredit = kind === 2 && (profile.permissions.includes('Sales.Approve') || (profile.permissions.includes('Finance.View') && profile.permissions.includes('Sales.View')))
+  const credit = useCreditExposure('/orders/' + id + '/credit-exposure', canViewCredit)
   const action = useMutation({
     mutationFn: ({ path, body }: { path: string; body: unknown }) =>
       api('/orders/' + id + path, json('POST', body)),
@@ -595,8 +598,9 @@ function OrderDetailContent({ kind, profile }: { kind: number; profile: Profile 
           )}
           {order.status === 2 && allowed('Approve') && query.data.canApprove !== false && (
             <Button
-              disabled={action.isPending}
-              onClick={() =>
+              disabled={action.isPending || (kind === 2 && (!credit.data || credit.isError || credit.isFetching || (credit.data.requiresOverride && !profile.permissions.includes('Sales.OverrideCreditLimit'))))}
+              onClick={() => {
+                if (kind === 2 && credit.data?.requiresOverride) { setReason(''); setReasonVersion(order.version); setReasonAction('approve'); return }
                 post(
                   '/approve',
                   { version: order.version },
@@ -604,7 +608,7 @@ function OrderDetailContent({ kind, profile }: { kind: number; profile: Profile 
                     ? 'Phê duyệt đơn mua hàng này?'
                     : 'Phê duyệt đơn bán và giữ hàng trong kho?',
                 )
-              }
+              }}
             >
               Phê duyệt đơn
             </Button>
@@ -620,20 +624,23 @@ function OrderDetailContent({ kind, profile }: { kind: number; profile: Profile 
           <p className="muted">Đơn cần người duyệt độc lập hoặc người có quyền duyệt theo hạn mức.</p>}
         {reasonAction && <form className="form-stack section-gap" onSubmit={e => {
           e.preventDefault()
-          if (reason.trim()) post('/' + reasonAction, { version: reasonVersion, reason: reason.trim() }, 'Xác nhận thay đổi trạng thái đơn hàng?')
+          const blockedCredit = reasonAction === 'approve' && (!credit.data || credit.isError || credit.isFetching || !profile.permissions.includes('Sales.OverrideCreditLimit'))
+          if (reason.trim() && !blockedCredit) post('/' + reasonAction, { version: reasonVersion, reason: reason.trim() }, 'Xác nhận thay đổi trạng thái đơn hàng?')
         }}>
           <div className="field">
-            <label htmlFor="order-action-reason">Lý do {reasonAction === 'cancel' ? 'hủy đơn' : reasonAction === 'reject' ? 'từ chối' : 'yêu cầu sửa'}</label>
+            <label htmlFor="order-action-reason">Lý do {reasonAction === 'approve' ? 'duyệt vượt hạn mức' : reasonAction === 'cancel' ? 'hủy đơn' : reasonAction === 'reject' ? 'từ chối' : 'yêu cầu sửa'}</label>
             <textarea id="order-action-reason" required maxLength={300} value={reason} onChange={e => setReason(e.target.value)} />
           </div>
           <div className="form-actions">
-            <Button disabled={action.isPending || !reason.trim()}>Xác nhận</Button>
+            <Button disabled={action.isPending || !reason.trim() || (reasonAction === 'approve' && (!credit.data || credit.isError || credit.isFetching || !profile.permissions.includes('Sales.OverrideCreditLimit')))}>Xác nhận</Button>
             <Button type="button" variant="outline" onClick={() => { setReasonAction(''); setReason('') }}>Đóng</Button>
           </div>
         </form>}
         {order.expectedDate && <p>Ngày dự kiến: {calendarDate(order.expectedDate)} {order.isOverdue && <span className="badge badge-warn">Quá hạn</span>}</p>}
         {query.data.note && <p className="muted section-gap">{query.data.note}</p>}
       </section>
+      {canViewCredit && <CreditExposurePanel query={credit} showProjection={[1, 2, 8].includes(order.status)} />}
+      {order.status === 2 && kind === 2 && credit.data?.requiresOverride && <p className="notice notice-error">Đơn vượt hạn mức công nợ. Cần quyền duyệt vượt hạn mức và lý do để tiếp tục.</p>}
       <div className="table-panel">
         <div className="table-scroll" role="region" aria-label="Dòng đơn hàng" tabIndex={0}>
           <table aria-label="Dòng đơn hàng">

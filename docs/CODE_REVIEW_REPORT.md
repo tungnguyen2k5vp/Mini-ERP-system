@@ -1,5 +1,18 @@
 # Code review checkpoint
 
+## V2 milestone 3 · 27 November 2026
+
+| Finding | Correction and regression |
+| --- | --- |
+| Two sales approvals for one customer could reserve different SKUs against the same remaining credit. A concurrent limit reduction could also arrive between the approval check and the write. | Approval, credit-affecting postings and limit updates take the customer lock first. Cross-SKU and concurrent catalog-update SQL tests check the committed limit, reservation and audit result. |
+| Rounding unshipped quantities independently could count an extra cent after a partial delivery. An unused credit on another order could understate exposure. | Subtract the two cumulative rounded sales amounts. Compute positive net debt separately for each order. Test exact limits, fractional cents, payments, cancellations and returns. |
+| Removing a posted allocation would alter earlier statements and could leave a refund without cash backing. | Append a dated full reversal with a unique source, a request key and an audit event. Recheck surviving cash per order, reject backdating and match actor and reason on replay. Tests cover competing refunds, multi-order allocations and the tick immediately before the reversal. |
+| A catalog editor could raise a customer's limit or switch it to unlimited through an ordinary contact edit. | Compare the persisted limit under the customer lock. Require the separate grant for changes and record the before/after values with the actor in the same transaction. |
+| A customer statement opened with a supplier-direction URL could link to a purchase order. | Take the direction from the partner statement response and replace the inconsistent filter in the URL. Browser coverage checks the source link, partner, selected direction and current credit panel. |
+| The first Minh An fixture inserted a backdated movement into a demo warehouse that already contained later movements for that SKU. The stored running balance then disagreed with date order. | Create a warehouse dedicated to this scenario. Verify both movements in chronological order, their costs and the final reservation before recording seed completion. Retain the earlier trial database separately. |
+
+[SQL and browser verification](TEST_REPORT.md) · [Finance permissions](API_PERMISSION_MATRIX.md)
+
 ## V2 milestone 2 · 27 November 2026
 
 | Finding | Correction and verification |

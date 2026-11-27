@@ -31,6 +31,10 @@ internal static class DocumentTransactions
             ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
             : null;
 
+    // Credit approval, cash posting and corrections take this lock before touching the partner's orders.
+    public static Task LockFinancePartnerAsync(this ErpDbContext db, Guid partnerId, CancellationToken ct) =>
+        db.Database.ExecuteSqlInterpolatedAsync($"SELECT Id FROM catalog.BusinessPartners WITH (UPDLOCK,HOLDLOCK) WHERE Id={partnerId}", ct);
+
     public static Task LockDocumentRequestAsync(this ErpDbContext db, string resource, CancellationToken ct) =>
         db.Database.ExecuteSqlInterpolatedAsync($"""
             DECLARE @result int;

@@ -20,7 +20,7 @@ using MiniErp.Infrastructure.Persistence;
 namespace MiniErp.IntegrationTests;
 
 [Collection("SqlServer")]
-public sealed class OrderTests(ErpFixture fixture)
+public sealed partial class OrderTests(ErpFixture fixture)
 {
     [SqlServerFact]
     public async Task Detail_holds_document_lock_until_ambient_read_committed_transaction_ends()

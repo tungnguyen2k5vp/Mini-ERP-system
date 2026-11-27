@@ -65,7 +65,7 @@ export function RecordDetail({ profile, resource }: { profile: Profile; resource
   if (isPartner(resource)) {
     fields.push(['Email', row.email ?? '—'], ['Điện thoại', row.phone ?? '—'], ['Địa chỉ', row.address ?? '—'],
       ['Mã số thuế', row.taxCode ?? '—'], ['Kỳ hạn thanh toán', String(row.paymentTermsDays ?? 0) + ' ngày'])
-    if (resource === 'customers') fields.push(['Hạn mức công nợ', formatMoney(row.creditLimit ?? 0)])
+    if (resource === 'customers') fields.push(['Hạn mức công nợ', row.creditLimit === 0 ? 'Không giới hạn' : formatMoney(row.creditLimit ?? 0)])
   }
   return <>
     <Link className="back-link" to={config.path}><ArrowLeft size={16} aria-hidden /> {config.title}</Link>
@@ -88,18 +88,19 @@ export function RecordDetail({ profile, resource }: { profile: Profile; resource
   </>
 }
 
-export function RecordForm({ resource }: { resource: Resource }) {
+export function RecordForm({ resource, profile }: { resource: Resource; profile: Profile }) {
   const { id } = useParams()
   const query = useRecord(resource, id)
   if (id && query.isPending) return <Loading />
   if (query.isError) return <ErrorNotice error={query.error} />
-  return <RecordEditor key={resource + (query.data?.id ?? '')} resource={resource} row={query.data} />
+  return <RecordEditor key={resource + (query.data?.id ?? '')} resource={resource} row={query.data} profile={profile} />
 }
 
-function RecordEditor({ resource, row }: { resource: Resource; row?: RecordRow }) {
+function RecordEditor({ resource, row, profile }: { resource: Resource; row?: RecordRow; profile: Profile }) {
   const config = records[resource]
   const navigate = useNavigate()
   const [version] = useState(row?.version)
+  const limitReadOnly = resource === 'customers' && Boolean(row) && !profile.permissions.includes('Finance.ChangeCreditLimit')
   const form = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -112,7 +113,8 @@ function RecordEditor({ resource, row }: { resource: Resource; row?: RecordRow }
   const save = useMutation({
     mutationFn: (value: z.infer<typeof schema>) => {
       const basic = { code: value.code, name: value.name, isActive: value.isActive, version }
-      const input = isPartner(resource) ? { ...value, ...basic, email: value.email || null } : basic
+      const input = isPartner(resource) ? { ...value, ...basic, email: value.email || null,
+        creditLimit: limitReadOnly ? row!.creditLimit : value.creditLimit } : basic
       return api<RecordRow>('/' + resource + (row ? '/' + row.id : ''), json(row ? 'PUT' : 'POST', input))
     },
     onSuccess: result => {
@@ -140,10 +142,12 @@ function RecordEditor({ resource, row }: { resource: Resource; row?: RecordRow }
         return <div className="field" key={field.name}>
           <label htmlFor={field.name}>{field.label}</label>
           <input id={field.name} type={numeric ? 'number' : field.name === 'email' ? 'email' : 'text'}
+            readOnly={field.name === 'creditLimit' && limitReadOnly}
             aria-invalid={Boolean(errors[field.name])} aria-describedby={errors[field.name] ? field.name + '-error' : undefined}
             min={numeric ? 0 : undefined} step={field.name === 'creditLimit' ? '0.0001' : undefined}
             {...form.register(field.name, { valueAsNumber: numeric })} />
           {errors[field.name] && <span className="field-error" id={field.name + '-error'}>{errors[field.name]?.message}</span>}
+          {field.name === 'creditLimit' && limitReadOnly && <small>Chỉ đọc. Cần quyền thay đổi hạn mức công nợ để điều chỉnh.</small>}
         </div>
       })}</div>
       <label className="checkbox-row"><input type="checkbox" {...form.register('isActive')} /> Đang sử dụng</label>

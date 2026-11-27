@@ -50,8 +50,17 @@ internal static class FinanceModel
             e.HasKey(x => new { x.PaymentId, x.InvoiceId });
             e.Property(x => x.Amount).HasPrecision(19, 2);
         });
-        // Financial postings are append-only; corrections use credits and refunds.
-        foreach (var type in new[] { typeof(FinanceInvoice), typeof(FinancePayment), typeof(PaymentAllocation) })
+        model.Entity<PaymentReversal>(e =>
+        {
+            e.ToTable("PaymentReversals", "finance");
+            e.HasIndex(x => x.PaymentId).IsUnique();
+            e.HasIndex(x => x.RequestId).IsUnique();
+            e.Property(x => x.Reason).HasMaxLength(300).IsRequired();
+            e.HasOne<FinancePayment>().WithOne().HasForeignKey<PaymentReversal>(x => x.PaymentId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+        // Financial postings are append-only; corrections append linked inverse facts.
+        foreach (var type in new[] { typeof(FinanceInvoice), typeof(FinancePayment), typeof(PaymentAllocation), typeof(PaymentReversal) })
             foreach (var property in model.Entity(type).Metadata.GetProperties().Where(x => !x.IsPrimaryKey()))
                 property.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
     }

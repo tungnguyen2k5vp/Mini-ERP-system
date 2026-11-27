@@ -1,5 +1,19 @@
 # Test report
 
+## V2 milestone 3 · 27 November 2026
+
+| Surface | Observed result |
+| --- | --- |
+| Backend and SQL Server | Debug build passed with zero warnings and errors. On `MiniErp_Test_M3_Verified_20261127`, 14 unit and 75 integration tests passed with zero skips. They include concurrent approvals for one customer across different SKUs, a competing limit reduction, fractional cents, concurrent refund/reversal, retry after rollback, and historical cutoffs at single-tick precision. TRX files are in `.work/m3-sql-verified`. |
+| Upgrade from milestone 2 | The exact `f147aa8` binary created the six-migration preview with 300 orders, 373 stock documents, 370 invoices, 200 payments and 1,849 audit events. Before/after migration 7, the history verification output had the same SHA-256, `BC7A29B0FD5C61D8273F96B7C293373CD3C14B6449D81710CEC4FCF6B3FD77D9`. A second rehearsal on a previously exercised database also matched, including 363 orders, 469 stock documents, 406 invoices, 217 payments, 226 allocations and 2,767 events. EF found no pending model changes. |
+| Fresh installation and seed replay | Ran all seven migrations from empty and separately upgraded the seeded M2 preview. Ran the final seed twice on each. Counts and SHA-256 values for 15 business/audit tables, including rowversions, were identical within each pair. Each database had one historical seed marker and one credit correction completion marker. The dedicated warehouse received 10 and issued 8 units, held 2 on hand and reserved, and kept a 45,000 VND moving average. |
+| Live demo | Logged in as Administrator and Manager on the upgraded preview. The Manager's four statement entries were +480,000, −180,000, +180,000 and −120,000 VND. Both closing and overdue debt were 360,000 VND. Current exposure included a further 120,000 VND committed, leaving 20,000 VND available. [Desktop](screenshots/v2-m3-minh-an-1280.png) · [Mobile](screenshots/v2-m3-minh-an-390.png) |
+| Frontend | ESLint, TypeScript, all three Vitest cases, Vite production build and the manual Impeccable detector passed. The build emitted two upstream Zod annotation notices. |
+| Browser | All 44 Playwright cases passed together on the upgraded preview. Chromium ran 22, Firefox 11 and WebKit 11. Each engine exercised override approval, shipment, payment, a lost reversal response, stable retry identity, signed statement entries and denial of an over-limit Manager approval. The deliberately inconsistent statement link corrected its direction, retained the customer and linked the proper sales order. |
+| Responsive and accessibility | The statement passed axe and horizontal page-overflow checks at measured widths of 320, 390, 768, 1024, 1280 and 1440 CSS pixels in each engine. Inspected the dated Minh An statement and both workflows at desktop and mobile sizes. [Override desktop](screenshots/v2-m3-order-credit-override-1280.png) · [Override mobile](screenshots/v2-m3-order-credit-override-390.png) · [Reversal desktop](screenshots/v2-m3-payment-correction-1280.png) · [Reversal mobile](screenshots/v2-m3-payment-correction-390.png) |
+
+An earlier local run exposed depleted shared stock and a race when opening the payment form immediately after selecting a supplier. Consuming tests now receive the missing stock through the real warehouse flow, the ordinary shipping test uses its own customer, and payment editors bind their commands to the current partner. The passing run is in `.work/m3-browser-verified`.
+
 ## V2 milestone 2 · 27 November 2026
 
 | Surface | Observed result |

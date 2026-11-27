@@ -1,23 +1,23 @@
 # Bàn giao MiniErp
 
-## Checkpoint V2 · Milestone 2 · 27/11/2026
+## Mốc 3 · Hạn mức và sửa sai phiếu thu chi · 27/11/2026
 
-Bản thử hiện ở migration thứ sáu `20261127025043_DocumentWorkflow`. Có thể sửa đơn và phiếu kho nháp, trả đơn để sửa rồi gửi duyệt lại, ghi lý do từ chối/hủy và xem lịch sử người xử lý. Đơn đã duyệt hoặc thực hiện một phần có ngày dự kiến trong quá khứ xuất hiện trong bộ lọc quá hạn. Kiểm kê lại cần người sửa xác nhận số đếm mới.
+Migration thứ bảy là `20261127041408_CreditAndPaymentCorrections`. Khi duyệt đơn bán, hệ thống khóa khách hàng, cộng nợ hóa đơn và cam kết chưa giao, rồi so với hạn mức. Hạn mức bằng 0 là không giới hạn. Duyệt vượt mức cần quyền riêng và lý do. Phiếu đảo có liên kết tới phiếu thu, chi hoặc hoàn tiền gốc. Sao kê áp dụng bút toán đảo từ lúc ghi sổ. [Chính sách tín dụng và thu chi](FINANCE.md) · [Ma trận quyền](API_PERMISSION_MATRIX.md)
 
-Mốc tiếp theo là milestone 3 về hạn mức tín dụng và sửa sai phiếu thanh toán. Nhật ký cũ thiếu người lập được xử lý bằng quyền tự duyệt riêng. Cấu hình ngưỡng giá trị mặc định để trống. [Ma trận nghiệp vụ](BUSINESS_WORKFLOWS.md) · [Kiểm thử](TEST_REPORT.md) · [Quyết định kỹ thuật](DECISIONS.md)
+Mở **Công nợ & thanh toán → Lịch sử đối tác**, chọn **Công ty Phân phối Minh An** (`DEMO-TD`). Đơn bán 600.000 đồng đã giao 480.000 đồng. Trong sao kê có phiếu thu nhầm 180.000 đồng, phiếu đảo và khoản thu đúng 120.000 đồng. Dư hóa đơn là 360.000 đồng, cam kết chưa giao 120.000 đồng, còn 20.000 đồng trên hạn mức 500.000 đồng. Chọn liên kết đơn trong sao kê để xem lần duyệt ngoại lệ và phiếu giao gốc. [Kịch bản demo](DEMO_GUIDE.md)
 
-Bản build cuối đã qua 14 unit test, 59 ca tích hợp SQL Server, 3 Vitest và 38 ca Playwright trên ba trình duyệt. Ca hai nhân viên sửa cùng một phiên bản đơn ghi đúng người và toàn bộ nội dung của lần lưu thành công. Phiếu kho giữ phần đang nhập khi tải nền lỗi. Kết quả SQL ở `.work/m2-sql-clean`, ảnh kiểm tra ở `.work/m2-browser-final`. [Quy tắc cần kiểm chứng cho hạn mức và đảo thanh toán](UPGRADE_V2_PLAN.md#milestone-3-handover--design-to-verify)
+Đã chạy 14 unit test, 75 ca tích hợp SQL Server, 3 ca Vitest và 44 ca Playwright. Hai lần diễn tập nâng cấp giữ nguyên dấu vân tay lịch sử. Bản cài mới và bản nâng cấp đều có số dư và giá vốn theo thứ tự giao dịch khớp sau hai lần chạy seed. [Báo cáo kiểm thử và ảnh](TEST_REPORT.md)
 
-Bản thử V2 trên máy này dùng `MiniErp_Test_V2_Browser`. Lệnh PowerShell để mở lại đúng bản đã diễn tập sau khi build:
+## Chạy bản thử trên máy này
 
 ~~~powershell
-$env:MINIERP_TEST_CONNECTION = 'Server=lpc:localhost;Database=MiniErp_Test_V2_Browser;Integrated Security=True;Encrypt=True;TrustServerCertificate=True'
+$env:MINIERP_TEST_CONNECTION = 'Server=lpc:localhost;Database=MiniErp_Test_M3_Preview_20261127;Integrated Security=True;Encrypt=True;TrustServerCertificate=True'
 ./scripts/start-dev.ps1 -TestDatabase
 ~~~
 
 Khi bản thử đang chạy, dùng `./scripts/stop-dev.ps1` trước khi khởi động lại. Tài khoản Manager thử riêng được lưu trong `.work/v2-review-account.json` trên máy này. Các file trong `.work` được Git bỏ qua.
 
-Ngày 26/11/2026. Mở http://localhost:5186, đăng nhập bằng `admin@minierp.example`. PowerShell trong thư mục MiniErp hiển thị riêng mật khẩu demo bằng `(Get-Content .work/dev.env.json -Raw | ConvertFrom-Json).AdminPassword`. File này được Git bỏ qua.
+Mở http://localhost:5186, đăng nhập bằng `admin@minierp.example`. Trong PowerShell tại thư mục MiniErp, lấy mật khẩu bằng `(Get-Content .work/dev.env.json -Raw | ConvertFrom-Json).AdminPassword`. Administrator thử được cả duyệt vượt mức và đảo phiếu. Manager có thể duyệt đơn do người khác lập trong hạn mức và đọc sao kê.
 
 ## Chạy và kiểm tra
 
@@ -32,6 +32,6 @@ Chạy lần lượt `./scripts/setup.ps1`, `./scripts/migrate-db.ps1`, `./scrip
 
 ## Tiếp tục phiên mới
 
-Đọc AGENTS.md, sau đó đọc [trạng thái](PROJECT_STATUS.md), [các quyết định](DECISIONS.md), [kết quả kiểm thử](TEST_REPORT.md) và [việc còn lại](NEXT_STEPS.md). Bắt đầu phần tín dụng tại OrderService, FinanceService, Settlement và FinanceReport.
+Đọc AGENTS.md, sau đó đọc [trạng thái](PROJECT_STATUS.md), [các quyết định](DECISIONS.md), [kết quả kiểm thử](TEST_REPORT.md) và [việc còn lại](NEXT_STEPS.md). Mốc 4 triển khai báo giá, bảng giá và chiết khấu. Chốt cách phân bổ số lẻ khi giao từng phần, trả hàng và đảo trước khi nối báo giá với đơn bán.
 
 [Demo từng bước](DEMO_GUIDE.md) · [Báo cáo SQL](SQL_PERFORMANCE.md) · [Bài tập và phỏng vấn](interview/README.md)

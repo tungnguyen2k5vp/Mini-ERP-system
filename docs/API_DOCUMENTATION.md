@@ -53,6 +53,8 @@ A successful retry of an unchanged fulfillment or payment returns the existing r
 
 Use GET and POST on /products, /categories, /units, /warehouses, /payment-methods, /customers and /suppliers. GET and PUT on each ID address the detail. Assign active status with PUT and the current version. List filters include search, active, page, pageSize, sort and descending. Products also accept categoryId.
 
+Tạo khách hàng bằng `Catalog.Create` được đặt hạn mức ban đầu (0 là không giới hạn) và ghi nhật ký riêng. PUT khách hàng cần `Catalog.Update`; nếu hạn mức khác giá trị đang lưu, phải có thêm `Finance.ChangeCreditLimit`, kể cả tăng, giảm hoặc đặt về 0. Có thể sửa tên/liên hệ với đúng hạn mức hiện tại mà không cần quyền này. Phiên bản cũ trả 409; thiếu quyền thay hạn mức trả 403 trước khi sửa bất kỳ trường nào. Sự kiện `SetInitialCreditLimit`/`ChangeCreditLimit` ghi tác giả và giá trị trước/sau trong cùng giao dịch.
+
 ## Inventory
 
 | Method and route | Behavior |
@@ -80,3 +82,16 @@ Identical create retries use the original normalized payload fingerprint even af
 Both detail APIs return `history: [{action, atUtc, actorId, actorName, reason}]` from successful audit events, ordered by event ID. Unknown historical actors remain null; actorName is the current account display name. History records actions and reasons, not prior draft contents or a restore facility. Details read a coherent document/lines/history view.
 
 Stock edit costs require `Reports.Sensitive` for explicit values. Omitted/null cost retains a retained product's stored cost. A restricted editor adding a new receipt product omits cost and receives the server's current purchase-price snapshot; replacing a product does not carry the removed product's cost. Other omitted costs retain existing posting defaults. Response costs stay null without valuation permission. Creation retains its existing explicit receipt-cost requirement.
+
+## V2 milestone 3: tín dụng và điều chỉnh thanh toán
+
+| Route | Hợp đồng |
+| --- | --- |
+| `GET /orders/{id}/credit-exposure` | Mức sử dụng tín dụng hiện tại của đơn bán; cần `Sales.Approve` hoặc đồng thời `Finance.View` và `Sales.View`. |
+| `GET /finance/credit-exposure/{partnerId}` | Khách hàng hiện tại; cần `Finance.View`. Trả `creditLimit`, `outstanding`, `unbilled`, `used`, `available`, `orderAmount`, `projected`, `requiresOverride`. Đây không phải số liệu lịch sử theo ngày sao kê. |
+| `GET /finance/statement` | Bắt buộc `partnerId`; nhận `asOfDate` hoặc `asOf` UTC, không đồng thời; `page`, `pageSize`. Cần `Finance.View`. |
+| `POST /finance/payments/{id}/reverse` | `{requestId, reason}`; cần `Finance.View`, `Finance.Post`, `Finance.Reverse`. Trả phiếu gốc cùng `reversal: {id, requestId, postedAtUtc, reason}`; không sửa số tiền hoặc phân bổ gốc. |
+
+Sao kê trả `items`, `pageNumber`, `pageSize`, `total`, `cutoff`, `partnerName`, `direction`, `closingBalance`, `overdue`. Mỗi dòng có `kind` (`Invoice`, `Credit`, `Payment`, `Refund`, `PaymentReversal`, `RefundReversal`), `sourceId`, `orderId`, `orderNumber`, `invoiceId`, `paymentId`, `atUtc`, `dueAtUtc`, `amount`, `outstanding`, `isOverdue`. Một phiếu thu/chi phân bổ nhiều hóa đơn có nhiều dòng, mỗi dòng theo đúng phần phân bổ. Số tiền có dấu theo tác động lên công nợ; `outstanding` là dư nợ hóa đơn ghi nợ tại mốc chốt, không áp dụng cho dòng tiền. Bù trừ theo hóa đơn cũ nhất trong cùng đơn và chiều công nợ. Tổng chốt và quá hạn tính trên toàn bộ dữ liệu tại mốc chốt, không chỉ trang đang xem.
+
+Hạn mức bằng 0 nghĩa là không giới hạn (`available=null`). Chỉ `projected > creditLimit` cần `Sales.OverrideCreditLimit` và lý do; bằng hạn mức vẫn được duyệt theo các điều kiện khác. Ghi đè tín dụng không thay thế `Sales.Approve`, tách biệt với ngưỡng duyệt theo số tiền. Đảo thanh toán là đảo toàn bộ một lần, thời điểm không trước phiếu gốc. Lặp đúng requestId/lý do/người thực hiện trả lần đảo cũ; yêu cầu khác trả 409. Nếu tiền hoàn còn lại vượt tiền thực còn lại của bất kỳ đơn liên quan, phải đảo phiếu hoàn phụ thuộc trước. Không tự động đảo dây chuyền; phiếu sai nguồn/phân bổ cần đối soát trước khi sửa.
