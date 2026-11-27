@@ -55,3 +55,17 @@ Permissions are read from the current profile on every request. Existing bearer 
 ## Approval overrides
 
 `Orders.SelfApprove` overrides maker separation for the creator, latest editor, latest submitter and unknown legacy creator. `Orders.ApproveAboveLimit` is additionally required when the rounded order total is greater than or equal to configured `Orders__ApprovalThresholdVnd`. Neither override replaces the module Approve grant. An unset threshold disables only the amount check. Default Manager grants contain neither override; administrators retain their permission bypass. Actor IDs come from audit events, without inventing attribution for migrated records.
+
+## Milestone 3: quyền tín dụng và đảo thu chi
+
+| Tác vụ | Quyền bắt buộc |
+| --- | --- |
+| Sao kê `/finance/statement`, tín dụng khách hàng `/finance/credit-exposure/{partnerId}` | `Finance.View` |
+| Tín dụng của đơn `/orders/{id}/credit-exposure` | `Sales.Approve` hoặc cả `Finance.View` và `Sales.View` |
+| Duyệt đơn bán vượt hạn mức dương | `Sales.Approve` cùng các điều kiện duyệt hiện hành, thêm `Sales.OverrideCreditLimit` và lý do |
+| Đảo phiếu `/finance/payments/{id}/reverse` | Đồng thời `Finance.View`, `Finance.Post`, `Finance.Reverse` |
+| Đổi hạn mức của khách hàng đã tồn tại, kể cả giảm hoặc đặt 0 | Đồng thời `Catalog.Update` và `Finance.ChangeCreditLimit`; giữ nguyên hạn mức để sửa liên hệ chỉ cần `Catalog.Update` |
+
+`Finance.Reverse` và `Sales.OverrideCreditLimit` được cấp độc lập theo vai trò; mặc định chỉ quản trị viên có hai quyền này. Kế toán có quyền thu chi không mặc nhiên được đảo, người duyệt đơn không mặc nhiên được vượt hạn mức. Hạn mức 0 là không giới hạn. Thay đổi quyền vẫn được kiểm tra ở máy chủ với phiên hiện tại; giao diện xác nhận không thay thế chính sách này.
+
+`Finance.ChangeCreditLimit` cũng được cấp độc lập, mặc định chỉ quản trị viên có. `Catalog.Create` vẫn cho phép đặt hạn mức ban đầu khi tạo khách hàng, bao gồm 0; nhật ký ghi riêng chính sách ban đầu. Mọi thay đổi hạn mức sau đó cần quyền mới cùng `Catalog.Update`, so sánh giá trị đang lưu và rowversion trước khi sửa. Nhật ký `ChangeCreditLimit` lưu người thực hiện và hạn mức trước/sau theo định dạng số bất biến; sửa liên hệ với hạn mức không đổi không tạo sự kiện thay đổi hạn mức.

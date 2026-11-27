@@ -1,13 +1,28 @@
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { expect, test, type Page } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { login } from './session'
+import { ensureAvailableStock } from './stock-fixture'
 
 async function createOrder(page: Page, kind: 'mua' | 'ban', quantity: number) {
+  let customerId: string | undefined
+  if (kind === 'ban') {
+    await ensureAvailableStock(page, 'VP-01-02', 'Kho Hà Nội', quantity)
+    const code = 'KB-' + randomUUID().slice(0, 12)
+    await page.goto('/khach-hang/moi')
+    await page.getByLabel('Mã', { exact: true }).fill(code)
+    await page.getByLabel('Tên', { exact: true }).fill('Khách kiểm tra giao hàng ' + code)
+    await page.getByLabel('Hạn mức công nợ (VND)', { exact: true }).fill('0')
+    await page.getByRole('button', { name: 'Lưu khách hàng', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Khách kiểm tra giao hàng ' + code, exact: true })).toBeVisible()
+    customerId = new URL(page.url()).pathname.split('/').at(-1)
+    expect(customerId).toBeTruthy()
+  }
   await page.goto(`/${kind}-hang`)
   await page.getByRole('link', { name: 'Lập đơn mới' }).click()
   const partner = page.getByLabel(kind === 'mua' ? 'Nhà cung cấp' : 'Khách hàng', { exact: true })
-  await partner.selectOption({ index: 1 })
+  await partner.selectOption(customerId ?? { index: 1 })
   const partnerId = await partner.inputValue()
   await page.getByLabel('Kho thực hiện').selectOption({ label: 'Kho Hà Nội' })
   const product = page.getByLabel('Sản phẩm 1', { exact: true })

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using MiniErp.Api.Auth;
 using MiniErp.Application;
 using MiniErp.Application.Auth;
@@ -71,8 +72,10 @@ internal static class CatalogEndpoints
             var row = await catalog.SavePartnerAsync(kind, null, input, http.Actor(), ct);
             return Results.Created($"/api/v1/{resource}/{row.Id}", row);
         }).RequireAuthorization(Permissions.CreateCatalog).Produces<PartnerResponse>(201);
-        group.MapPut("/{id:guid}", async (Guid id, PartnerInput input, HttpContext http, CatalogService catalog, CancellationToken ct) =>
-            Results.Ok(await catalog.SavePartnerAsync(kind, id, input, http.Actor(), ct)))
+        group.MapPut("/{id:guid}", async (Guid id, PartnerInput input, HttpContext http, IAuthorizationService authorization,
+            CatalogService catalog, CancellationToken ct) =>
+            Results.Ok(await catalog.SavePartnerAsync(kind, id, input, http.Actor(), ct,
+                (await authorization.AuthorizeAsync(http.User, null, Permissions.ChangeCreditLimit)).Succeeded)))
             .RequireAuthorization(Permissions.UpdateCatalog).Produces<PartnerResponse>().ProducesProblem(409);
     }
 

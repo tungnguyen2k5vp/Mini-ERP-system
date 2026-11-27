@@ -1,5 +1,33 @@
 # Session sequences
 
+## Tín dụng và đảo thu chi
+
+~~~mermaid
+sequenceDiagram
+    participant N as Người duyệt hoặc kế toán
+    participant A as API
+    participant D as SQL Server
+    N->>A: Duyệt đơn bán với phiên bản hiện tại
+    A->>D: Khóa khách hàng rồi đơn
+    A->>D: Tính nợ thuần dương và cam kết chưa giao
+    A->>A: Hạn mức 0 không giới hạn; vượt hạn mức cần quyền và lý do
+    A->>D: Ghi duyệt, giữ hàng và nhật ký cùng giao dịch
+    N->>A: Đảo phiếu với requestId và lý do
+    A->>A: Kiểm tra Finance.View + Finance.Post + Finance.Reverse
+    A->>D: Khóa đối tác, requestId và các đơn theo ID tăng dần
+    A->>D: Kiểm tra nguồn, thời điểm và tiền thực sau đảo
+    alt Yêu cầu đã thành công và trùng nội dung/người thực hiện
+        A-->>N: Phiếu gốc cùng lần đảo cũ
+    else Còn tiền hoàn không được bảo đảm
+        A-->>N: 409; đảo tiền hoàn phụ thuộc trước
+    else Đủ điều kiện
+        A->>D: Thêm PaymentReversal và audit; commit
+        A-->>N: Phiếu gốc cùng lần đảo mới
+    end
+~~~
+
+Sao kê tại mốc chốt chỉ nhận sự kiện đã xảy ra trước mốc đó. Mỗi phân bổ theo hóa đơn tạo một dòng có dấu; lần đảo đổi dấu tại thời điểm đảo, không xóa dòng quá khứ.
+
 ~~~mermaid
 sequenceDiagram
     participant B as Browser

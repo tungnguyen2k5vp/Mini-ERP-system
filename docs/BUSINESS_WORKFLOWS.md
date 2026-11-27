@@ -1,5 +1,13 @@
 # Business workflows
 
+## V3 · Tín dụng, sao kê và sửa phiếu thu chi
+
+Trước khi duyệt đơn bán, xem **Tín dụng hiện tại**: công nợ thuần dương theo từng đơn cộng cam kết đã duyệt nhưng chưa giao. Giao hàng chuyển cam kết sang công nợ hóa đơn, không cộng hai lần. Hạn mức 0 là không giới hạn; dự kiến bằng hạn mức vẫn hợp lệ. Vượt hạn mức dương cần quyền `Sales.OverrideCreditLimit`, lý do và các quyền duyệt hiện hành.
+
+Sao kê chọn đối tác và ngày chốt Việt Nam. Đây là ảnh chụp công nợ tại mốc chốt, còn tín dụng luôn là số hiện tại và có thêm cam kết chưa lập hóa đơn. Một phiếu phân bổ nhiều hóa đơn có một dòng cho mỗi phân bổ; số tiền có dấu theo tác động lên nợ. Bù trừ hóa đơn giảm với hóa đơn cũ nhất trong cùng đơn/chiều công nợ. Dư cuối kỳ và quá hạn không phụ thuộc trang đang mở.
+
+Phiếu thu chi sai được đảo toàn bộ bằng `Finance.Reverse` cùng `Finance.Post` và `Finance.View`. Nhập lý do; hệ thống giữ nguyên phiếu và phân bổ gốc, thêm lần đảo liên kết. Nếu còn tiền hoàn phụ thuộc khiến tiền thực của một đơn bị âm, đảo phiếu hoàn trước rồi mới đảo phiếu thu/chi. Không đảo dây chuyền tự động. Sau đó lập phiếu mới nếu cần phân bổ lại. Thời điểm ghi không được lùi trước hóa đơn, thanh toán hoặc lần đảo liên quan; sao kê trước lần đảo vẫn phản ánh phiếu gốc.
+
 ## Tracing discrepancies
 
 Open **Báo cáo tồn kho → Đối soát hiện tại**, optionally choose a warehouse, then open a reported SKU to inspect that warehouse's movement history. Compare the ledger with on-hand, saved reservations and the remaining approved quantity. The inconsistent-line count also catches opposite errors that cancel in a position total.

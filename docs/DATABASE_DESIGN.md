@@ -1,5 +1,11 @@
 # Database design
 
+## V2 milestone 3
+
+`finance.PaymentReversals` thêm một bản ghi bất biến cho mỗi phiếu bị đảo: Id, PaymentId (FK hạn chế xóa, duy nhất), RequestId (duy nhất), PostedAtUtc, Reason tối đa 300 ký tự và UserId tùy chọn. Phân bổ ngược được suy ra từ phân bổ gốc; không sửa Payments/Allocations và không lưu bản phân bổ âm trùng lặp. Sao kê, tuổi nợ và đối soát áp dụng sự kiện đảo tại thời điểm riêng, giữ nguyên kết quả trước mốc đảo.
+
+Giao dịch tín dụng/thu chi khóa đối tác trước rồi khóa các đơn theo ID tăng dần. Kiểm tra hạn mức dùng công nợ hiện tại và cam kết chưa giao; giá trị 0 là không giới hạn. Thu chi/đảo không được ghi trước sự kiện hóa đơn, thanh toán hoặc đảo liên quan của những đơn bị tác động. Giới hạn thời gian chỉ xét phạm vi nguồn, không áp đặt thứ tự lên các đối tác không liên quan.
+
 Migration `20261126100030_PostedSalesCostSnapshots` adds `inventory.DocumentLines.PostedSalesCost decimal(19,2) NULL` and a nonnegative check. New attributed sales events store a document-line amount in the posting transaction. The column remains null for independent warehouse operations, purchases and unattributed historical orders. Compare V1 and V2 fingerprints with the [read-only rehearsal script](../database/scripts/verify-v2-history.sql).
 
 Use a separate SQL Server database for MiniErp development and MiniErp_Test for tests. EF Core migrations under backend/src/MiniErp.Infrastructure/Persistence/Migrations own the schema. See [ERD](diagrams/ERD.md).

@@ -1,5 +1,14 @@
 # Decisions
 
+## V2 milestone 3 · 27 November 2026
+
+- Exposure is current positive net receivable debt per order plus approved unbilled commitments. Partial fulfillment moves value between these components instead of counting it twice. Excess credit in another order does not finance the candidate. A zero limit is unlimited; equality with a positive limit is permitted.
+- `Sales.OverrideCreditLimit` authorizes approval above a positive limit with reason, without replacing sales approval or maker/amount checks. `Finance.ChangeCreditLimit` separately protects every amendment to an established customer limit; creation retains its initial policy and dedicated audit event. Both new grants are independently assignable and admin-only by default.
+- Full payment/refund correction appends one immutable source-linked reversal with actor, timestamp, reason and request identity. Preserve original payment/allocation content. Reject unsupported surviving refunds; reverse dependent refunds first, without automatic cascade.
+- Lock partner before ascending source orders across credit approval, payment and correction. Do not backdate cash/correction before relevant invoice/payment/reversal facts. Historical reads apply inverse effects at their own timestamps; current exposure and cutoff statements serve different questions.
+- Statement cash rows represent individual invoice allocations with signed debt effects. Offset oldest invoices within the same order and direction. Closing/overdue totals cover the entire cutoff scope, independently of pagination.
+- Give the dated Minh An scenario its own empty warehouse, `DEMO-TD` (Kho mô phỏng tín dụng). The six-month sales history uses `DEMO-LS`. Mixing older event dates with an already valued position would break its historical running balance. Verify the receipt, issue, reserved quantity and moving average before marking this fixture complete.
+
 ## V2 reporting and costing
 
 - Vietnam operational periods use UTC+07:00. Keep UTC event timestamps and range predicates on the original timestamp columns. Perform calendar-day grouping only after filtering.

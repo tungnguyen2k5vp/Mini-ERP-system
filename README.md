@@ -6,6 +6,10 @@ Trace a purchase receipt or a sales shipment from its approved order through the
 
 ## Available workflows
 
+Sales approval checks the customer's outstanding invoices and approved unbilled orders against their credit limit. A zero limit allows unlimited credit. Overrides require a reason and a separate grant. Finance users with reversal permission can correct posted payments and refunds and see the effect in the partner statement on the day of reversal. [Finance rules](docs/FINANCE.md)
+
+Open the partner statement for **Công ty Phân phối Minh An**. After a partial shipment from **Kho mô phỏng tín dụng** (`DEMO-TD`) and a corrected receipt, the customer owes 360,000 VND. A further 120,000 VND is committed, leaving 20,000 VND available. [Demo steps](docs/DEMO_GUIDE.md)
+
 Purchase orders, sales orders and standalone stock drafts support version-checked edits. Reviewers can return an order for revision or reject it with a recorded reason. Document history identifies the actor for each step. Open orders past the promised date appear in the dashboard queue. [Workflow and approval rules](docs/BUSINESS_WORKFLOWS.md)
 
 V2 milestone 1 adds read-only stock and financial discrepancy reports, source-level sales cost snapshots and Vietnam business-day cutoffs. Open **Báo cáo tồn kho → Đối soát hiện tại** or **Công nợ & thanh toán → Đối soát** on the seeded preview. [V2 roadmap](docs/UPGRADE_V2_PLAN.md) · [Permissions](docs/API_PERMISSION_MATRIX.md)

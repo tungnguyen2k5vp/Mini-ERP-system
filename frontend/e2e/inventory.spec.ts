@@ -1,9 +1,12 @@
 import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { login } from './session'
+import { ensureAvailableStock } from './stock-fixture'
 
 test('post a transfer, see both ledger rows, and reverse it', async ({ page }) => {
+  test.setTimeout(90_000)
   await login(page)
+  await ensureAvailableStock(page, 'VP-01-02', 'Kho Hà Nội', 3)
   await page.getByRole('link', { name: 'Tồn kho', exact: true }).click()
   await expect(page.getByRole('table', { name: 'Tồn kho theo sản phẩm' })).toBeVisible()
   await page.screenshot({ path: join('..', 'docs', 'screenshots', 'inventory-desktop.png') })

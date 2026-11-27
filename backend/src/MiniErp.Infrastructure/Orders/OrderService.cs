@@ -99,12 +99,12 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
         await tx.CommitAsync(ct);
         return detail;
     }
-    public async Task<OrderDetail> TransitionAsync(int id, string action, OrderVersion input, RequestActor actor, CancellationToken ct, bool canSelfApprove = false, bool canApproveAboveLimit = false)
+    public async Task<OrderDetail> TransitionAsync(int id, string action, OrderVersion input, RequestActor actor, CancellationToken ct, bool canSelfApprove = false, bool canApproveAboveLimit = false, bool canOverrideCreditLimit = false)
     {
         if (action is not ("submit" or "approve" or "cancel" or "reject" or "return-for-revision"))
             throw ErpException.Invalid("invalid_order_transition", "Thao tác chuyển trạng thái không hợp lệ.");
         await using var tx = await db.BeginDocumentWriteAsync(ct);
-        await LockOrderAsync(id, ct);
+        await LockCustomerThenOrderAsync(id, ct);
         var order = await LoadAsync(id, ct);
         var reason = CatalogRules.OptionalText(input.Reason);
         if (reason?.Length > 300 || (action is "cancel" or "reject" or "return-for-revision" && reason is null))
@@ -123,6 +123,17 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
                 throw ErpException.Conflict("invalid_status", "Trạng thái đơn không phù hợp.");
             if (!await CanApproveAsync(order, actor.UserId, canSelfApprove, canApproveAboveLimit, ct))
                 throw ErpException.Forbidden("approval_permission_required", "Bạn cần quyền duyệt bổ sung cho đơn này.");
+            if (order.Kind == OrderKind.Sales)
+            {
+                var exposure = await CustomerCredit.ForLockedOrderAsync(db, order, ct);
+                if (exposure.RequiresOverride)
+                {
+                    if (!canOverrideCreditLimit) throw ErpException.Forbidden("credit_limit_override_required", "Bạn cần quyền vượt hạn mức tín dụng.");
+                    if (reason is null) throw ErpException.Invalid("credit_limit_reason_required", "Cần nhập lý do vượt hạn mức tín dụng.");
+                    db.AuditEntries.Add(AuditEntry.Create(actor, Now, "OverrideCreditLimit", "Order", id.ToString(),
+                        after: $"{exposure.Projected}/{exposure.CreditLimit}", reason: reason, inputVersion: input.Version));
+                }
+            }
             order.Approve();
             if (order.Kind == OrderKind.Sales)
                 foreach (var line in order.Lines.OrderBy(x => x.ProductId))
@@ -157,7 +168,7 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
             throw ErpException.Invalid("invalid_fulfillment", "Chọn các dòng hàng khác nhau.");
         foreach (var line in input.Lines) StockBalance.RequirePositive(line.Quantity);
         await using var tx = await db.BeginDocumentWriteAsync(ct);
-        await LockOrderAsync(id, ct);
+        await LockCustomerThenOrderAsync(id, ct);
         var order = await LoadAsync(id, ct);
         var previous = await db.OrderFulfillments.SingleOrDefaultAsync(x => x.RequestId == input.RequestId, ct);
         if (previous is not null)
@@ -247,7 +258,7 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
     public async Task<OrderDetail> ReverseAsync(int id, int fulfillmentId, RequestActor actor, CancellationToken ct)
     {
         await using var tx = await db.BeginDocumentWriteAsync(ct);
-        await LockOrderAsync(id, ct);
+        await LockCustomerThenOrderAsync(id, ct);
         var order = await LoadAsync(id, ct);
         var original = await db.OrderFulfillments.SingleOrDefaultAsync(x => x.Id == fulfillmentId && x.OrderId == id, ct)
             ?? throw ErpException.Missing("fulfillment_missing", "Không tìm thấy phiếu thực hiện.");
@@ -312,7 +323,7 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
     public async Task<OrderDetail> EditAsync(int id, OrderEditInput input, RequestActor actor, CancellationToken ct)
     {
         await using var tx = await db.BeginDocumentWriteAsync(ct);
-        await LockOrderAsync(id, ct);
+        await LockCustomerThenOrderAsync(id, ct, input.PartnerId);
         var order = await LoadAsync(id, ct);
         if (input.Version != Convert.ToBase64String(order.Version)) throw ErpException.Conflict("stale_version", "Đơn đã thay đổi. Hãy tải lại.");
         var next = new OrderInput(order.RequestId, order.Kind, input.PartnerId, input.WarehouseId, input.Note, input.Lines, input.ExpectedDate);
@@ -426,6 +437,18 @@ public sealed class OrderService(ErpDbContext db, StockService stock, IFinancePo
         }
         await finance.AddInvoiceAsync(new FinanceSource(stockId, order.Id, Number(order.Kind, order.Id), order.PartnerId,
             order.Kind == OrderKind.Purchase ? FinanceDirection.Payable : FinanceDirection.Receivable, credit, amount, cost, Now), ct);
+    }
+    public Task<CreditExposure> CreditExposureAsync(int id, CancellationToken ct) => CustomerCredit.ForOrderAsync(db, id, ct);
+    private async Task LockCustomerThenOrderAsync(int id, CancellationToken ct, Guid? nextPartner = null)
+    {
+        var source = await db.Orders.AsNoTracking().Where(x => x.Id == id).Select(x => new { x.Kind, x.PartnerId }).SingleOrDefaultAsync(ct)
+            ?? throw ErpException.Missing("order_missing", "Không tìm thấy đơn.");
+        if (source.Kind == OrderKind.Sales)
+            foreach (var partner in new[] { source.PartnerId, nextPartner ?? source.PartnerId }.Distinct().Order())
+                await db.LockFinancePartnerAsync(partner, ct);
+        await LockOrderAsync(id, ct);
+        if (source.Kind == OrderKind.Sales && !await db.Orders.AnyAsync(x => x.Id == id && x.PartnerId == source.PartnerId, ct))
+            throw ErpException.Conflict("stale_version", "Đối tác của đơn đã thay đổi. Hãy tải lại.");
     }
     private Task LockOrderAsync(int id, CancellationToken ct) =>
         db.Database.ExecuteSqlInterpolatedAsync($"SELECT Id FROM orders.Orders WITH (UPDLOCK,HOLDLOCK) WHERE Id={id}", ct);

@@ -1,6 +1,7 @@
+import { PartnerStatement } from './partner-statement'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Printer } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useCallback, useLayoutEffect, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { DataTable } from '../../components/data-table'
 import { EmptyState, ErrorNotice, Loading } from '../../components/feedback'
@@ -35,6 +36,7 @@ type Payment = {
   amount: number
   reference: string | null
   postedAtUtc: string
+  reversal: { id: number; requestId: string; postedAtUtc: string; reason: string } | null
   allocations: { invoiceId: number; amount: number }[]
 }
 type Aging = {
@@ -58,23 +60,63 @@ type Reconciliation = {
   difference: number
 }
 
+function paymentContext(search: string) {
+  const current = new URLSearchParams(search)
+  const tab = current.get('tab') || 'invoices'
+  return [tab, current.get('direction') === '2' ? 2 : 1, current.get('partnerId') || ''].join(':')
+}
+
 export function FinancePage({ profile }: { profile: Profile }) {
+  return <FinanceContent profile={profile} />
+}
+
+function FinanceContent({ profile }: { profile: Profile }) {
   const [params, setParams] = useSearchParams()
-  const [tab, setTab] = useState(() =>
-    ['invoices', 'payments', 'aging', 'reconciliation'].includes(params.get('tab') ?? '')
-      ? params.get('tab')!
-      : 'invoices',
-  )
-  const [direction, setDirection] = useState(params.get('direction') === '2' ? 2 : 1)
-  const [partnerId, setPartner] = useState(params.get('partnerId') ?? '')
-  const [invoiceId, setInvoiceId] = useState(params.get('invoiceId') ?? '')
+  const tabs = ['invoices', 'payments', 'aging', 'reconciliation', 'statement']
+  const tab = tabs.includes(params.get('tab') ?? '') ? params.get('tab')! : 'invoices'
+  const direction = params.get('direction') === '2' ? 2 : 1
+  const partnerId = params.get('partnerId') ?? ''
+  const normalizeStatementDirection = useCallback((actual: number) => {
+    if (actual === direction) return
+    setParams(previous => {
+      const next = new URLSearchParams(previous)
+      next.set('direction', String(actual))
+      return next
+    }, { replace: true })
+  }, [direction, setParams])
+  const invoiceId = params.get('invoiceId') ?? ''
+  function filter(name: string, value: string) {
+    setParams(previous => {
+      const next = new URLSearchParams(previous)
+      if (value) next.set(name, value)
+      else next.delete(name)
+      return next
+    })
+  }
+  const setTab = (value: string) => filter('tab', value)
+  const setInvoiceId = (value: string) => filter('invoiceId', value)
   const [page, setPage] = useState(1)
   const [allocationPage, setAllocationPage] = useState(1)
-  const [asOf, setAsOf] = useState(() => params.get('asOfDate') || businessDate())
-  const [pay, setPay] = useState(false)
+  const asOf = params.get('asOfDate') || businessDate()
+  const setAsOf = (value: string) => filter('asOfDate', value)
+  const scope = [tab, direction, partnerId].join(':')
+  const [paymentScope, setPaymentScope] = useState<string | null>(null)
+  const pay = paymentScope === scope
+  function setPay(open: boolean) {
+    setPaymentScope(open ? paymentContext(window.location.search) : null)
+  }
   const [refund, setRefund] = useState(false)
   const [allocations, setAllocations] = useState<Record<string, string>>({})
   const [requestId, setRequestId] = useState(() => crypto.randomUUID())
+  const [correction, setCorrection] = useState<{ payment: Payment; requestId: string; reason: string; context: string } | null>(null)
+  const correctionContext = [tab, direction, partnerId].join(':')
+  useLayoutEffect(() => {
+    // Close a departed scope before paint; opening during navigation already carries the new URL scope.
+    const currentScope = paymentContext(window.location.search)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (paymentScope !== null && paymentScope !== currentScope) setPaymentScope(null)
+    if (correction !== null && correction.context !== currentScope) setCorrection(null)
+  }, [scope, paymentScope, correction])
   const [notice, setNotice] = useState('')
   const options = useQuery({
     queryKey: ['finance', 'options', direction],
@@ -137,7 +179,17 @@ export function FinancePage({ profile }: { profile: Profile }) {
       void queryClient.invalidateQueries()
     },
   })
+  const reverse = useMutation({
+    mutationFn: (value: { payment: Payment; requestId: string; reason: string }) =>
+      api('/finance/payments/' + value.payment.id + '/reverse', json('POST', { requestId: value.requestId, reason: value.reason.trim() })),
+    onSuccess: () => {
+      setCorrection(null)
+      setNotice('Đã đảo phiếu thanh toán. Phân bổ đã được hoàn lại; phiếu gốc vẫn được lưu.')
+      void queryClient.invalidateQueries()
+    },
+  })
   function reset() {
+    if (!reverse.isPending) setCorrection(null)
     setPage(1)
     setAllocationPage(1)
     setPay(false)
@@ -149,6 +201,8 @@ export function FinancePage({ profile }: { profile: Profile }) {
     Object.values(allocations).reduce((sum, n) => sum + Math.round((Number(n) || 0) * 100), 0) / 100
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    const currentScope = paymentContext(window.location.search)
+    if (!pay || currentScope !== paymentScope) return
     const f = new FormData(e.currentTarget)
     if (!window.confirm(`Ghi sổ ${money(total)} VND và phân bổ cho các hóa đơn đã chọn?`)) return
     save.mutate({
@@ -192,6 +246,7 @@ export function FinancePage({ profile }: { profile: Profile }) {
             ['payments', 'Thu · chi'],
             ['aging', 'Tuổi nợ'],
             ['reconciliation', 'Đối soát'],
+            ['statement', 'Lịch sử đối tác'],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -200,24 +255,24 @@ export function FinancePage({ profile }: { profile: Profile }) {
             id={'tab-' + key}
             aria-controls="finance-content"
             aria-selected={tab === key}
-            disabled={save.isPending}
+            disabled={save.isPending || reverse.isPending}
             key={key}
             onClick={() => {
               setTab(key)
               reset()
             }}
             onKeyDown={(e) => {
-              const keys = ['invoices', 'payments', 'aging', 'reconciliation']
+              const keys = ['invoices', 'payments', 'aging', 'reconciliation', 'statement']
               const index = keys.indexOf(tab)
               const next =
                 e.key === 'ArrowRight'
-                  ? (index + 1) % 4
+                  ? (index + 1) % keys.length
                   : e.key === 'ArrowLeft'
-                    ? (index + 3) % 4
+                    ? (index + keys.length - 1) % keys.length
                     : e.key === 'Home'
                       ? 0
                       : e.key === 'End'
-                        ? 3
+                        ? keys.length - 1
                         : -1
               if (next >= 0) {
                 e.preventDefault()
@@ -236,12 +291,14 @@ export function FinancePage({ profile }: { profile: Profile }) {
         <label className="filter-select">
           <span className="sr-only">Loại công nợ</span>
           <select
-            disabled={save.isPending}
+            disabled={save.isPending || reverse.isPending}
             value={direction}
             onChange={(e) => {
-              setDirection(Number(e.target.value))
-              setPartner('')
-              setInvoiceId('')
+              const next = new URLSearchParams(params)
+              next.set('direction', e.target.value)
+              next.delete('partnerId')
+              next.delete('invoiceId')
+              setParams(next)
               reset()
             }}
           >
@@ -254,11 +311,14 @@ export function FinancePage({ profile }: { profile: Profile }) {
             <span className="sr-only">Lọc đối tác</span>
             <select
               aria-label="Lọc đối tác"
-              disabled={save.isPending}
+              disabled={save.isPending || reverse.isPending}
               value={partnerId}
               onChange={(e) => {
-                setPartner(e.target.value)
-                setInvoiceId('')
+                const next = new URLSearchParams(params)
+                if (e.target.value) next.set('partnerId', e.target.value)
+                else next.delete('partnerId')
+                next.delete('invoiceId')
+                setParams(next)
                 reset()
               }}
             >
@@ -271,7 +331,7 @@ export function FinancePage({ profile }: { profile: Profile }) {
             </select>
           </label>
         )}
-        {(tab === 'aging' || tab === 'reconciliation') && (
+        {(tab === 'aging' || tab === 'reconciliation' || tab === 'statement') && (
           <div className="field inline-field">
             <label htmlFor="aging-date">Tính đến</label>
             <input
@@ -288,7 +348,7 @@ export function FinancePage({ profile }: { profile: Profile }) {
         {(tab === 'invoices' || tab === 'payments') &&
           profile.permissions.includes('Finance.Post') && (
             <Button
-              disabled={save.isPending}
+              disabled={save.isPending || reverse.isPending}
               onClick={() => {
                 setPay(!pay)
                 setAllocations({})
@@ -329,7 +389,7 @@ export function FinancePage({ profile }: { profile: Profile }) {
             <p className="notice">Chọn một đối tác ở bộ lọc để phân bổ thanh toán.</p>
           ) : (
             <form onSubmit={submit}>
-              <fieldset className="form-stack" disabled={save.isPending}>
+              <fieldset className="form-stack" disabled={save.isPending || reverse.isPending}>
                 <label className="checkbox-row">
                   <input
                     type="checkbox"
@@ -470,6 +530,22 @@ export function FinancePage({ profile }: { profile: Profile }) {
           )}
         </section>
       )}
+      {correction && correction.context === correctionContext && <section className="panel editor-panel">
+        <h2>Đảo {correction.payment.isRefund ? 'phiếu hoàn tiền' : 'phiếu thanh toán'} #{correction.payment.id}</h2>
+        <p className="page-description">Đảo toàn bộ {money(correction.payment.amount)} VND và hoàn lại phân bổ. Lịch sử phiếu gốc được giữ nguyên.</p>
+        <form className="form-stack" onSubmit={event => {
+          event.preventDefault()
+          if (correction.context === correctionContext && correction.reason.trim() && window.confirm('Đảo phiếu và hoàn lại toàn bộ phân bổ?')) reverse.mutate(correction)
+        }}>
+          <div className="field"><label htmlFor="payment-reversal-reason">Lý do đảo phiếu</label>
+            <textarea id="payment-reversal-reason" required maxLength={300} disabled={reverse.isPending} value={correction.reason}
+              onChange={event => setCorrection({ ...correction, reason: event.target.value, requestId: crypto.randomUUID() })} />
+          </div>
+          <ErrorNotice error={reverse.error} />
+          <div className="form-actions"><Button disabled={reverse.isPending || !correction.reason.trim()}>Xác nhận đảo phiếu</Button>
+            <Button type="button" variant="outline" disabled={reverse.isPending} onClick={() => setCorrection(null)}>Đóng</Button></div>
+        </form>
+      </section>}
       <div id="finance-content" role="tabpanel" aria-labelledby={'tab-' + tab}>
         <p className="print-only">
           {tab === 'invoices'
@@ -485,7 +561,7 @@ export function FinancePage({ profile }: { profile: Profile }) {
           {partners.data?.find((partner) => partner.id === partnerId)?.name ?? 'Tất cả đối tác'}
           {tab === 'aging' && ' · Tính đến ' + asOf}
         </p>
-        {activeQuery.isPending ? (
+        {tab === 'statement' ? <PartnerStatement key={partnerId + ':' + asOf} partnerId={partnerId} asOf={asOf} profile={profile} onDirection={normalizeStatementDirection} /> : activeQuery.isPending ? (
           <Loading />
         ) : (
           <>
@@ -503,7 +579,7 @@ export function FinancePage({ profile }: { profile: Profile }) {
                       <div className="table-identity">
                         <strong>#{row.original.id}</strong>
                         <span>
-                          {row.original.isCredit ? 'Điều chỉnh trả hàng' : 'Hóa đơn nội bộ'}
+                          {row.original.isCredit ? 'Ghi giảm công nợ' : 'Hóa đơn nội bộ'}
                         </span>
                       </div>
                     ),
@@ -617,6 +693,10 @@ export function FinancePage({ profile }: { profile: Profile }) {
                     header: 'Số tiền (VND)',
                     cell: ({ row }) => money(row.original.amount),
                   },
+                  { id: 'correction', header: 'Điều chỉnh', cell: ({ row }) => row.original.reversal ?
+                    <div className="table-identity"><strong>Đã đảo #{row.original.reversal.id}</strong><span>{date(row.original.reversal.postedAtUtc)}</span><span>{row.original.reversal.reason}</span></div> :
+                    profile.permissions.includes('Finance.Reverse') && profile.permissions.includes('Finance.Post') ?
+                      <Button variant="outline" disabled={reverse.isPending} onClick={() => { reverse.reset(); setCorrection({ payment: row.original, requestId: crypto.randomUUID(), reason: '', context: correctionContext }) }}>Đảo phiếu #{row.original.id}</Button> : 'Chưa đảo' },
                   { accessorKey: 'reference', header: 'Tham chiếu' },
                   {
                     accessorKey: 'postedAtUtc',
@@ -625,7 +705,7 @@ export function FinancePage({ profile }: { profile: Profile }) {
                   },
                   {
                     id: 'allocations',
-                    header: 'Phân bổ',
+                    header: 'Phân bổ gốc',
                     cell: ({ row }) =>
                       row.original.allocations
                         .map((a) => `#${a.invoiceId}: ${money(a.amount)}`)

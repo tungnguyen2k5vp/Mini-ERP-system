@@ -6,6 +6,8 @@ BEGIN TRANSACTION;
 
 SELECT Name, Rows, CONVERT(varchar(64), HASHBYTES('SHA2_256', Records), 2) AS HistorySha256
 FROM (VALUES
+    ('Partners', (SELECT COUNT_BIG(*) FROM catalog.BusinessPartners),
+        (SELECT * FROM catalog.BusinessPartners ORDER BY Id FOR JSON PATH, INCLUDE_NULL_VALUES)),
     ('Stock documents', (SELECT COUNT_BIG(*) FROM inventory.Documents),
         (SELECT Id,RequestId,Kind,Status,WarehouseKind,WarehouseId,DestinationId,Note,ReversesId,CreatedAtUtc,PostedAtUtc,Version
          FROM inventory.Documents ORDER BY Id FOR JSON PATH, INCLUDE_NULL_VALUES)),
@@ -40,5 +42,18 @@ IF COL_LENGTH('inventory.DocumentLines','PostedSalesCost') IS NOT NULL
         CONVERT(varchar(64),HASHBYTES(''SHA2_256'',(SELECT DocumentId,ProductId,PostedSalesCost FROM inventory.DocumentLines
         WHERE PostedSalesCost IS NOT NULL ORDER BY DocumentId,ProductId FOR JSON PATH)),2) AS SalesCostSha256
         FROM inventory.DocumentLines');
+
+IF COL_LENGTH('orders.Orders','ExpectedDate') IS NOT NULL
+    EXEC(N'IF EXISTS (SELECT 1 FROM orders.Orders WHERE ExpectedDate IS NOT NULL OR CreatePayloadHash IS NOT NULL)
+        SELECT COUNT_BIG(*) AS VersionedOrders,CONVERT(varchar(64),HASHBYTES(''SHA2_256'',
+        (SELECT Id,ExpectedDate,CreatePayloadHash FROM orders.Orders ORDER BY Id FOR JSON PATH,INCLUDE_NULL_VALUES)),2) AS WorkflowSha256 FROM orders.Orders');
+IF COL_LENGTH('inventory.Documents','IsEdited') IS NOT NULL
+    EXEC(N'IF EXISTS (SELECT 1 FROM inventory.Documents WHERE IsEdited=1 OR CreatePayloadHash IS NOT NULL)
+        SELECT COUNT_BIG(*) AS VersionedStockDocuments,CONVERT(varchar(64),HASHBYTES(''SHA2_256'',
+        (SELECT Id,IsEdited,CreatePayloadHash FROM inventory.Documents ORDER BY Id FOR JSON PATH,INCLUDE_NULL_VALUES)),2) AS WorkflowSha256 FROM inventory.Documents');
+IF COL_LENGTH('audit.AuditLogs','InputVersion') IS NOT NULL
+    EXEC(N'IF EXISTS (SELECT 1 FROM audit.AuditLogs WHERE Reason IS NOT NULL OR InputVersion IS NOT NULL)
+        SELECT COUNT_BIG(*) AS WorkflowEvents,CONVERT(varchar(64),HASHBYTES(''SHA2_256'',
+        (SELECT Id,Reason,InputVersion FROM audit.AuditLogs ORDER BY Id FOR JSON PATH,INCLUDE_NULL_VALUES)),2) AS WorkflowSha256 FROM audit.AuditLogs');
 
 COMMIT;

@@ -77,10 +77,10 @@ export function App() {
           return [
             <Route key={path} path={path} element={can(session.user, 'Catalog.View',
               <RecordsPage key={resource} resource={resource} profile={session.user} />)} />,
-            <Route key={path + '/moi'} path={path + '/moi'} element={can(session.user, 'Catalog.Create', <RecordForm resource={resource} />)} />,
+            <Route key={path + '/moi'} path={path + '/moi'} element={can(session.user, 'Catalog.Create', <RecordForm resource={resource} profile={session.user} />)} />,
             <Route key={path + '/:id'} path={path + '/:id'} element={can(session.user, 'Catalog.View',
               <RecordDetail resource={resource} profile={session.user} />)} />,
-            <Route key={path + '/:id/sua'} path={path + '/:id/sua'} element={can(session.user, 'Catalog.Update', <RecordForm resource={resource} />)} />,
+            <Route key={path + '/:id/sua'} path={path + '/:id/sua'} element={can(session.user, 'Catalog.Update', <RecordForm resource={resource} profile={session.user} />)} />,
           ]
         })}
         <Route path="403" element={<StatusPage code="403" title="Bạn chưa có quyền truy cập" detail="Liên hệ quản trị viên nếu cần quyền cho trang này." />} />

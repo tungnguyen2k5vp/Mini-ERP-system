@@ -44,6 +44,16 @@ public sealed class FinancePayment
     public List<PaymentAllocation> Allocations { get; init; } = [];
 }
 
+public sealed class PaymentReversal
+{
+    public long Id { get; private set; }
+    public long PaymentId { get; init; }
+    public Guid RequestId { get; init; }
+    public DateTime PostedAtUtc { get; init; }
+    public string Reason { get; init; } = "";
+    public Guid? UserId { get; init; }
+}
+
 public sealed class PaymentAllocation
 {
     public long PaymentId { get; private set; }

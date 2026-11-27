@@ -36,6 +36,13 @@ internal static class OrderEndpoints
             var detail = await service.DetailAsync(id,ct);
             return Results.Ok(detail with { CanApprove = CanApprove(detail,http,await GrantsAsync(http,identity),service) });
         });
+        orders.MapGet("/{id:int}/credit-exposure",async (int id,HttpContext http,IIdentityService identity,OrderService service,CancellationToken ct) =>
+        {
+            var grants = await GrantsAsync(http,identity);
+            if (!grants.Contains(Permissions.ApproveSales) && !(grants.Contains(Permissions.ViewFinance) && grants.Contains(Permissions.ViewSales)))
+                return Results.Forbid();
+            return Results.Ok(await service.CreditExposureAsync(id,ct));
+        });
         orders.MapPost("/",async (OrderInput input,HttpContext http,IAuthorizationService auth,IIdentityService identity,OrderService service,CancellationToken ct) =>
         {
             await RequireAsync(http,auth,input.Kind,"Create");
@@ -56,7 +63,7 @@ internal static class OrderEndpoints
                 var grants = await GrantsAsync(http,identity);
                 var self = grants.Contains(Permissions.SelfApproveOrders);
                 var above = grants.Contains(Permissions.ApproveOrdersAboveLimit);
-                var detail = await service.TransitionAsync(id,action,input,http.Actor(),ct,self,above);
+                var detail = await service.TransitionAsync(id,action,input,http.Actor(),ct,self,above,grants.Contains(Permissions.OverrideCreditLimit));
                 return Results.Ok(detail with { CanApprove = CanApprove(detail,http,grants,service) });
             });
         }

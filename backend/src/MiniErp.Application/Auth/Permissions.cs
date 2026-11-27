@@ -21,10 +21,13 @@ public static class Permissions
     public const string CreateSales = "Sales.Create";
     public const string ApproveSales = "Sales.Approve";
     public const string CancelSales = "Sales.Cancel";
+    public const string OverrideCreditLimit = "Sales.OverrideCreditLimit";
     public const string SelfApproveOrders = "Orders.SelfApprove";
     public const string ApproveOrdersAboveLimit = "Orders.ApproveAboveLimit";
     public const string ViewFinance = "Finance.View";
     public const string PostFinance = "Finance.Post";
+    public const string ReverseFinance = "Finance.Reverse";
+    public const string ChangeCreditLimit = "Finance.ChangeCreditLimit";
     public const string ViewReports = "Reports.View";
     public const string ViewSensitiveReports = "Reports.Sensitive";
 
@@ -33,7 +36,7 @@ public static class Permissions
         ManageUsers, ManageRoles, ViewAudit, ViewCatalog, CreateCatalog, UpdateCatalog, ExportCatalog,
         ViewInventory, PostInventory, ViewPurchasing, CreatePurchasing, ApprovePurchasing, CancelPurchasing,
         ViewSales, CreateSales, ApproveSales, CancelSales, SelfApproveOrders, ApproveOrdersAboveLimit,
-        ViewFinance, PostFinance, ViewReports, ViewSensitiveReports
+        OverrideCreditLimit, ViewFinance, PostFinance, ReverseFinance, ChangeCreditLimit, ViewReports, ViewSensitiveReports
     ];
 
     public static readonly IReadOnlyDictionary<string, string[]> DefaultRoles = new Dictionary<string, string[]>

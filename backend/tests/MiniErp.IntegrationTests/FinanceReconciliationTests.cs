@@ -19,7 +19,7 @@ using MiniErp.Infrastructure.Persistence;
 namespace MiniErp.IntegrationTests;
 
 [Collection("SqlServer")]
-public sealed class FinanceReconciliationTests(ErpFixture fixture)
+public sealed partial class FinanceReconciliationTests(ErpFixture fixture)
 {
     [SqlServerFact]
     public async Task Diagnostics_detect_missing_zero_invoice_and_wrong_source_value_while_legacy_difference_is_zero()

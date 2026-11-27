@@ -480,6 +480,42 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("MiniErp.Domain.Finance.PaymentReversal", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("PaymentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("PostedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PaymentId")
+                        .IsUnique();
+
+                    b.HasIndex("RequestId")
+                        .IsUnique();
+
+                    b.ToTable("PaymentReversals", "finance");
+                });
+
             modelBuilder.Entity("MiniErp.Domain.Inventory.StockBalance", b =>
                 {
                     b.Property<Guid>("WarehouseId")
@@ -1185,6 +1221,15 @@ namespace MiniErp.Infrastructure.Persistence.Migrations
                     b.HasOne("MiniErp.Domain.Finance.FinancePayment", null)
                         .WithMany("Allocations")
                         .HasForeignKey("PaymentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MiniErp.Domain.Finance.PaymentReversal", b =>
+                {
+                    b.HasOne("MiniErp.Domain.Finance.FinancePayment", null)
+                        .WithOne()
+                        .HasForeignKey("MiniErp.Domain.Finance.PaymentReversal", "PaymentId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

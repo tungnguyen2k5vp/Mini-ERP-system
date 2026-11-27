@@ -2,6 +2,14 @@
 
 ~~~mermaid
 erDiagram
+    PAYMENT_REVERSALS {
+        bigint Id PK
+        bigint PaymentId FK,UK
+        uniqueidentifier RequestId UK
+        datetime2 PostedAtUtc
+        string Reason "max 300"
+        uniqueidentifier UserId "nullable"
+    }
     ORDERS {
         int Id PK
         byte Status "1-8; includes rejected and returned for revision"
@@ -56,6 +64,7 @@ erDiagram
     ORDERS ||--o{ INVOICES : originates
     INVOICES ||--o{ ALLOCATIONS : settles
     PAYMENTS ||--|{ ALLOCATIONS : distributes
+    PAYMENTS ||--o| PAYMENT_REVERSALS : corrected_by
     BUSINESS_PARTNERS ||--o{ PAYMENTS : pays_or_receives
 ~~~
 
